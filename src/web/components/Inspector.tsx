@@ -3,6 +3,8 @@ import type { AtlasNode, NodeKind } from '../../shared/graph';
 interface InspectorProps {
   node: AtlasNode | null;
   onClose: () => void;
+  canDive: boolean;
+  onDive: () => void;
 }
 
 const KIND_LABELS: Record<NodeKind, string> = {
@@ -16,7 +18,7 @@ const KIND_LABELS: Record<NodeKind, string> = {
   function: 'Функция',
 };
 
-export function Inspector({ node, onClose }: InspectorProps) {
+export function Inspector({ node, onClose, canDive, onDive }: InspectorProps) {
   return (
     <aside className={`inspector ${node ? 'inspector--open' : ''}`} aria-hidden={!node}>
       {node ? (
@@ -28,6 +30,11 @@ export function Inspector({ node, onClose }: InspectorProps) {
           </div>
           <h2>{node.label}</h2>
           {node.path ? <code className="path-chip">{node.path}</code> : null}
+          {canDive ? (
+            <button type="button" className="dive-button" onClick={onDive}>
+              Открыть этот уровень <span>→</span>
+            </button>
+          ) : null}
           {node.language ? (
             <div className="detail-row"><span>Язык</span><strong>{node.language}</strong></div>
           ) : null}

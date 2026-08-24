@@ -9,6 +9,7 @@ import type {
   ProjectAnalysis,
   SymbolMember,
 } from '../shared/graph.js';
+import { parseWithTreeSitter, type ParsedSource } from './tree-sitter-parser.js';
 
 const MAX_FILES = 1_500;
 const MAX_FILE_SIZE = 512 * 1024;
@@ -55,17 +56,6 @@ interface ServiceInfo {
   manifest: string;
   technologies: string[];
   manifestText: string;
-}
-
-interface ParsedSource {
-  symbols: Array<{
-    name: string;
-    kind: NodeKind;
-    line: number;
-    members: SymbolMember[];
-  }>;
-  imports: string[];
-  routes: SymbolMember[];
 }
 
 export class AnalysisError extends Error {
@@ -139,7 +129,7 @@ export async function analyzeProject(inputPath: string): Promise<ProjectAnalysis
     const moduleId = `module:${file.relativePath}`;
     const owner = findOwningService(file.relativePath, services);
     moduleIds.set(normalizeModulePath(file.relativePath), moduleId);
-    const parsed = parseSource(file.relativePath, content);
+    const parsed = await parseSource(file.relativePath, content);
 
     nodes.push({
       id: moduleId,
@@ -149,7 +139,7 @@ export async function analyzeProject(inputPath: string): Promise<ProjectAnalysis
       language,
       subtitle: path.dirname(file.relativePath) === '.' ? language : path.dirname(file.relativePath),
       members: parsed.routes,
-      metadata: { lines: content.split('\n').length },
+      metadata: { lines: content.split('\n').length, parser: parsed.parser },
     });
     edges.push(edge(owner?.id ?? projectId, moduleId, 'contains'));
 
@@ -369,10 +359,12 @@ function packageHasWorkspaces(content: string): boolean {
   }
 }
 
-function parseSource(relativePath: string, content: string): ParsedSource {
+async function parseSource(relativePath: string, content: string): Promise<ParsedSource> {
   const extension = path.extname(relativePath).toLowerCase();
   if (['.ts', '.tsx', '.js', '.jsx'].includes(extension)) return parseTypeScript(relativePath, content);
   if (extension === '.py') return parsePython(content);
+  const treeSitterResult = await parseWithTreeSitter(extension, content).catch(() => null);
+  if (treeSitterResult) return treeSitterResult;
   return parseGeneric(content, extension);
 }
 
@@ -442,7 +434,7 @@ function parseTypeScript(fileName: string, content: string): ParsedSource {
     const route = match[2] ?? match[4] ?? '/';
     routes.push({ name: `${method} ${route}`, kind: 'route' });
   }
-  return { symbols, imports, routes };
+  return { symbols, imports, routes, parser: 'TypeScript compiler API' };
 }
 
 function parsePython(content: string): ParsedSource {
@@ -481,7 +473,7 @@ function parsePython(content: string): ParsedSource {
     const routeMatch = /@(?:app|router)\.(get|post|put|patch|delete)\s*\(\s*['"]([^'"]+)/i.exec(line);
     if (routeMatch) routes.push({ name: `${routeMatch[1].toUpperCase()} ${routeMatch[2]}`, kind: 'route', line: index + 1 });
   });
-  return { symbols, imports, routes };
+  return { symbols, imports, routes, parser: 'Python structural parser' };
 }
 
 function parseGeneric(content: string, extension: string): ParsedSource {
@@ -503,7 +495,7 @@ function parseGeneric(content: string, extension: string): ParsedSource {
   const imports = extension === '.go'
     ? [...content.matchAll(/import\s+(?:\([^)]*?["`]([^"`]+)|["`]([^"`]+))/gs)].map((match) => match[1] ?? match[2])
     : [];
-  return { symbols, imports, routes: [] };
+  return { symbols, imports, routes: [], parser: 'Structural fallback' };
 }
 
 function resolveLocalImport(importer: string, specifier: string, moduleIds: Map<string, string>): string | undefined {

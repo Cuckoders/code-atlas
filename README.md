@@ -11,7 +11,9 @@
 - сервисы по manifest-файлам (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, Maven/Gradle и другие);
 - языковая статистика для TypeScript/JavaScript, Python, Java/Kotlin, Go, Rust, C#, PHP, Ruby, Swift, Dart и web-файлов;
 - глубокий разбор классов, интерфейсов, функций, методов, контроллеров и HTTP-маршрутов для TypeScript/JavaScript и Python;
-- базовый разбор символов для Java/Kotlin/Go/Rust/C#/PHP;
+- Tree-sitter WASM AST-разбор типов, функций и методов для Java, Go, Rust, C# и PHP;
+- структурный fallback для Kotlin и остальных распознаваемых языков;
+- проваливание в подграф сервиса или модуля с breadcrumbs и сохранением внешних зависимостей;
 - обнаружение PostgreSQL, MySQL/MariaDB, MongoDB, Redis, SQLite, Elasticsearch и DynamoDB;
 - безопасные ограничения: локальный bind, CORS/HTTP-заголовки, rate limit, игнорирование зависимостей/сборок, симлинков и больших файлов, лимит на размер снимка.
 
@@ -62,7 +64,8 @@ Static analyzer ──► normalized graph schema ──┬─► 2D renderer
 
 ## Следующий этап
 
-1. Tree-sitter адаптеры и точное разрешение импортов для всех заявленных языков.
-2. Git history/ownership, hotspots и дифф между ветками.
-3. Фоновое индексирование больших монорепозиториев и хранение снимков в SQLite.
-4. Desktop-оболочка Tauri для системного выбора папки.
+1. Точное разрешение package/module imports для Java, Go, Rust, C# и PHP.
+2. Kotlin Tree-sitter WASM-адаптер.
+3. Git history/ownership, hotspots и дифф между ветками.
+4. Фоновое индексирование больших монорепозиториев и хранение снимков в SQLite.
+5. Desktop-оболочка Tauri для системного выбора папки.

@@ -11,12 +11,17 @@ describe('analyzeProject', () => {
     const result = await analyzeProject(fixturePath);
 
     expect(result.summary.services).toBe(2);
-    expect(result.summary.modules).toBe(3);
+    expect(result.summary.modules).toBe(4);
     expect(result.summary.databases).toEqual(expect.arrayContaining(['PostgreSQL', 'Redis']));
     expect(result.summary.languages.map((language) => language.name)).toEqual(
-      expect.arrayContaining(['TypeScript', 'Python']),
+      expect.arrayContaining(['TypeScript', 'Python', 'Java']),
     );
     expect(result.nodes.some((node) => node.label === 'CatalogController' && node.kind === 'controller')).toBe(true);
+    expect(result.nodes.some((node) => (
+      node.label === 'InventoryController'
+      && node.kind === 'controller'
+      && node.members?.some((member) => member.name === 'reserve')
+    ))).toBe(true);
     expect(result.nodes.some((node) => node.label === 'OrderJob' && node.members?.some((member) => member.name === 'execute'))).toBe(true);
     expect(result.edges.some((edge) => edge.kind === 'imports')).toBe(true);
   });

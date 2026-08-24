@@ -48,6 +48,7 @@ export function App() {
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
   const [visibleKinds, setVisibleKinds] = useState<Set<NodeKind>>(() => new Set(ALL_KINDS));
   const [selectedNode, setSelectedNode] = useState<AtlasNode | null>(null);
+  const [focusNode, setFocusNode] = useState<AtlasNode | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +62,7 @@ export function App() {
       if (!response.ok || 'error' in payload) throw new Error('error' in payload ? payload.error : 'Ошибка анализа');
       setAnalysis(payload);
       setSelectedNode(null);
+      setFocusNode(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Неизвестная ошибка');
     } finally {
@@ -72,10 +74,25 @@ export function App() {
     void loadAnalysis('/api/demo');
   }, [loadAnalysis]);
 
-  const filteredGraph = useMemo(() => {
+  const focusedGraph = useMemo(() => {
     if (!analysis) return { nodes: [] as AtlasNode[], edges: [] as AtlasEdge[] };
-    return filterAtlasGraph(analysis.nodes, analysis.edges, visibleKinds);
-  }, [analysis, visibleKinds]);
+    return createFocusedGraph(analysis.nodes, analysis.edges, focusNode?.id);
+  }, [analysis, focusNode?.id]);
+
+  const filteredGraph = useMemo(
+    () => filterAtlasGraph(focusedGraph.nodes, focusedGraph.edges, visibleKinds, focusNode?.id),
+    [focusNode?.id, focusedGraph, visibleKinds],
+  );
+
+  const diveableIds = useMemo(() => {
+    if (!analysis) return new Set<string>();
+    return new Set(analysis.edges.filter((edge) => edge.kind === 'contains').map((edge) => edge.source));
+  }, [analysis]);
+
+  const focusTrail = useMemo(() => {
+    if (!analysis || !focusNode) return [];
+    return buildFocusTrail(analysis.nodes, analysis.edges, focusNode.id);
+  }, [analysis, focusNode]);
 
   const graph = useMemo(
     () => createFlowGraph(filteredGraph.nodes, filteredGraph.edges, deferredSearch),
@@ -96,6 +113,13 @@ export function App() {
     setSelectedNode((flowNode.data as AtlasGraphNodeData).atlas);
   }, []);
 
+  const handleNodeDoubleClick = useCallback<NodeMouseHandler>((_event, flowNode) => {
+    const atlas = (flowNode.data as AtlasGraphNodeData).atlas;
+    if (!diveableIds.has(atlas.id)) return;
+    setFocusNode(atlas);
+    setSelectedNode(null);
+  }, [diveableIds]);
+
   const toggleKind = useCallback((kind: NodeKind) => {
     if (kind === 'project') return;
     setVisibleKinds((current) => {
@@ -109,6 +133,14 @@ export function App() {
   const changeViewMode = useCallback((mode: '2d' | '3d') => {
     startTransition(() => setViewMode(mode));
   }, []);
+
+  const diveIntoSelected = useCallback(() => {
+    if (!selectedNode || !diveableIds.has(selectedNode.id)) return;
+    startTransition(() => {
+      setFocusNode(selectedNode);
+      setSelectedNode(null);
+    });
+  }, [diveableIds, selectedNode]);
 
   if (!analysis && loading) {
     return <LoadingScreen label="Строим карту демонстрационного проекта" />;
@@ -157,7 +189,19 @@ export function App() {
         <div className="canvas-toolbar">
           <div>
             <span className="pulse" />
-            Архитектурный граф
+            <nav className="focus-breadcrumb" aria-label="Текущий уровень карты">
+              <button type="button" onClick={() => setFocusNode(null)}>Архитектурный граф</button>
+              {focusTrail.slice(1).map((node, index) => (
+                <span key={node.id}>
+                  <i>/</i>
+                  <button
+                    type="button"
+                    className={index === focusTrail.length - 2 ? 'is-current' : ''}
+                    onClick={() => setFocusNode(node)}
+                  >{node.label}</button>
+                </span>
+              ))}
+            </nav>
             <small>{graph.nodes.length} узлов · {graph.edges.length} связей</small>
           </div>
           <label className="search-field">
@@ -175,6 +219,7 @@ export function App() {
             edges={graph.edges}
             nodeTypes={nodeTypes}
             onNodeClick={handleNodeClick}
+            onNodeDoubleClick={handleNodeDoubleClick}
             onPaneClick={() => setSelectedNode(null)}
             fitView
             fitViewOptions={{ padding: 0.24 }}
@@ -207,7 +252,12 @@ export function App() {
         {loading ? <div className="loading-overlay"><span />Анализируем исходники…</div> : null}
       </section>
 
-      <Inspector node={selectedNode} onClose={() => setSelectedNode(null)} />
+      <Inspector
+        node={selectedNode}
+        onClose={() => setSelectedNode(null)}
+        canDive={Boolean(selectedNode && diveableIds.has(selectedNode.id))}
+        onDive={diveIntoSelected}
+      />
     </main>
   );
 }
@@ -277,11 +327,71 @@ function filterAtlasGraph(
   nodes: AtlasNode[],
   edges: AtlasEdge[],
   visibleKinds: Set<NodeKind>,
+  preservedNodeId?: string,
 ): { nodes: AtlasNode[]; edges: AtlasEdge[] } {
-  const visibleNodes = nodes.filter((node) => node.kind === 'project' || visibleKinds.has(node.kind));
+  const visibleNodes = nodes.filter((node) => (
+    node.kind === 'project' || node.id === preservedNodeId || visibleKinds.has(node.kind)
+  ));
   const visibleIds = new Set(visibleNodes.map((node) => node.id));
   return {
     nodes: visibleNodes,
     edges: edges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)),
   };
+}
+
+function createFocusedGraph(
+  nodes: AtlasNode[],
+  edges: AtlasEdge[],
+  focusId?: string,
+): { nodes: AtlasNode[]; edges: AtlasEdge[] } {
+  if (!focusId) return { nodes, edges };
+  const children = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (edge.kind !== 'contains') continue;
+    const current = children.get(edge.source) ?? [];
+    current.push(edge.target);
+    children.set(edge.source, current);
+  }
+
+  const includedIds = new Set([focusId]);
+  const queue = [focusId];
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    for (const childId of children.get(currentId) ?? []) {
+      if (includedIds.has(childId)) continue;
+      includedIds.add(childId);
+      queue.push(childId);
+    }
+  }
+
+  const coreIds = new Set(includedIds);
+  for (const edge of edges) {
+    if (edge.kind === 'contains') continue;
+    if (coreIds.has(edge.source)) includedIds.add(edge.target);
+    if (coreIds.has(edge.target)) includedIds.add(edge.source);
+  }
+
+  return {
+    nodes: nodes.filter((node) => includedIds.has(node.id)),
+    edges: edges.filter((edge) => includedIds.has(edge.source) && includedIds.has(edge.target)),
+  };
+}
+
+function buildFocusTrail(nodes: AtlasNode[], edges: AtlasEdge[], focusId: string): AtlasNode[] {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const parentById = new Map(
+    edges.filter((edge) => edge.kind === 'contains').map((edge) => [edge.target, edge.source]),
+  );
+  const trail: AtlasNode[] = [];
+  const visited = new Set<string>();
+  let currentId: string | undefined = focusId;
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const node = nodeById.get(currentId);
+    if (node) trail.unshift(node);
+    currentId = parentById.get(currentId);
+  }
+  const project = nodes.find((node) => node.kind === 'project');
+  if (project && trail[0]?.id !== project.id) trail.unshift(project);
+  return trail;
 }

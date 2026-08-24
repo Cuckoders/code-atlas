@@ -88,6 +88,12 @@ button { color: inherit; }
 .canvas-shell { position: relative; min-width: 0; overflow: hidden; background: radial-gradient(circle at 50% 45%, rgba(34, 46, 61, .15), transparent 45%), #090b10; }
 .canvas-toolbar { position: absolute; inset: 0 0 auto 0; z-index: 5; height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid rgba(32, 38, 49, .75); background: rgba(9, 11, 16, .84); backdrop-filter: blur(12px); color: #a4adba; font-size: 10px; font-weight: 600; }
 .canvas-toolbar small { margin-left: 10px; color: #515b6b; font: 8px 'DM Mono'; }
+.focus-breadcrumb { display: inline-flex; align-items: center; gap: 5px; }
+.focus-breadcrumb span { display: inline-flex; align-items: center; gap: 5px; }
+.focus-breadcrumb i { color: #3f4856; font: 8px 'DM Mono'; }
+.focus-breadcrumb button { border: 0; padding: 0; background: transparent; color: #828d9c; font-size: 10px; font-weight: 600; cursor: pointer; }
+.focus-breadcrumb button:hover { color: #b4c0cf; }
+.focus-breadcrumb button.is-current { color: #9ce9d3; }
 .search-field { display: flex; align-items: center; width: 240px; height: 30px; padding: 0 9px; border: 1px solid #242b36; border-radius: 6px; background: #0c0f15; color: #596476; }
 .search-field input { width: 100%; border: 0; outline: 0; padding-left: 7px; background: transparent; color: #cfd5df; font-size: 9px; }
 .canvas-shell .react-flow { padding-top: 52px; }
@@ -132,6 +138,8 @@ button { color: inherit; }
 .icon-button { margin-left: auto; border: 0; background: transparent; color: #778292; font-size: 18px; cursor: pointer; }
 .inspector h2 { margin: 18px 0 9px; font: 600 20px 'DM Mono'; overflow-wrap: anywhere; }
 .path-chip { display: block; padding: 8px; border: 1px solid #252c37; border-radius: 5px; color: #7f8a9a; background: #090c11; font-size: 8px; overflow-wrap: anywhere; }
+.dive-button { display: flex; justify-content: space-between; width: 100%; margin: 10px 0 4px; padding: 10px 11px; border: 1px solid #2e4942; border-radius: 6px; background: #111d1a; color: #8edbc5; font-size: 9px; cursor: pointer; }
+.dive-button:hover { border-color: #538176; background: #14241f; }
 .detail-row { display: flex; justify-content: space-between; gap: 14px; padding: 10px 0; border-bottom: 1px solid #1d232c; font-size: 9px; }
 .detail-row span { color: #5f6978; text-transform: capitalize; }.detail-row strong { color: #aeb7c5; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
 .inspector__section { display: grid; gap: 10px; margin-top: 24px; }
