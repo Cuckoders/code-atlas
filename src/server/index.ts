@@ -1,7 +1,13 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createApp } from './app.js';
 
 const port = Number.parseInt(process.env.PORT ?? '4310', 10);
-const app = await createApp();
+const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
+const staticRoot = process.env.NODE_ENV === 'production'
+  ? path.resolve(currentDirectory, '../../dist')
+  : undefined;
+const app = await createApp({ staticRoot });
 
 const close = async () => {
   await app.close();

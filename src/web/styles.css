@@ -97,6 +97,16 @@ button { color: inherit; }
 .react-flow__controls-button:hover { background: #1a222d; }
 .react-flow__minimap { border: 1px solid #28303b; border-radius: 7px; background: #0c1017; }
 
+.graph-3d { position: absolute; inset: 52px 0 0; overflow: hidden; background: radial-gradient(circle at 50% 48%, #111a22 0%, #090b10 58%); }
+.graph-3d canvas { display: block; outline: 0; }
+.graph-3d__hud { position: absolute; left: 18px; bottom: 17px; display: flex; gap: 16px; padding: 8px 11px; border: 1px solid rgba(42, 51, 64, .82); border-radius: 7px; background: rgba(10, 13, 18, .82); color: #687385; font: 8px 'DM Mono'; backdrop-filter: blur(9px); pointer-events: none; }
+.graph-3d__hud span { display: flex; align-items: center; gap: 6px; }
+.graph-3d__hud i { width: 5px; height: 5px; border-radius: 50%; background: #5b7580; }
+.graph-3d__hud span:nth-child(2) i { background: #7ee2c5; }
+.graph-3d__hud span:nth-child(3) i { background: #bf91ff; }
+.graph-3d__reset { position: absolute; right: 18px; bottom: 17px; height: 32px; padding: 0 12px; border: 1px solid #2d3945; border-radius: 7px; background: rgba(14, 19, 26, .88); color: #8e9baa; font: 8px 'DM Mono'; cursor: pointer; backdrop-filter: blur(9px); }
+.graph-3d__reset:hover { border-color: #4f6f69; color: #9de5d0; }
+
 .atlas-node { position: relative; display: flex; align-items: center; width: 222px; min-height: 68px; padding: 11px 12px; border: 1px solid #2a3340; border-radius: 9px; background: linear-gradient(145deg, rgba(20, 25, 34, .98), rgba(13, 16, 23, .98)); box-shadow: 0 10px 30px rgba(0, 0, 0, .18); transition: opacity .2s, border-color .2s, transform .2s; }
 .atlas-node:hover { border-color: #4b596a; transform: translateY(-1px); }
 .atlas-node.is-selected { border-color: #7ee2c5; box-shadow: 0 0 0 1px rgba(126, 226, 197, .15), 0 10px 30px rgba(0, 0, 0, .32); }

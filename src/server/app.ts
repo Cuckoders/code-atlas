@@ -4,11 +4,13 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import staticFiles from '@fastify/static';
 import { AnalysisError, analyzeProject } from './analyzer.js';
 
 interface CreateAppOptions {
   logger?: boolean;
   demoPath?: string;
+  staticRoot?: string;
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<FastifyInstance> {
@@ -22,6 +24,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, { global: false });
+
+  if (options.staticRoot) {
+    await app.register(staticFiles, {
+      root: options.staticRoot,
+      index: ['index.html'],
+    });
+  }
 
   app.get('/api/health', async () => ({ status: 'ok' }));
 

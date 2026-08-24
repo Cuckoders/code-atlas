@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -16,6 +16,7 @@ import { Inspector } from './components/Inspector';
 import { ProjectSidebar } from './components/ProjectSidebar';
 
 const nodeTypes = { atlas: AtlasGraphNode };
+const Graph3D = lazy(() => import('./components/Graph3D'));
 const ALL_KINDS: NodeKind[] = ['project', 'service', 'database', 'module', 'controller', 'class', 'interface', 'function'];
 
 const COLUMN_BY_KIND: Record<NodeKind, number> = {
@@ -47,6 +48,7 @@ export function App() {
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
   const [visibleKinds, setVisibleKinds] = useState<Set<NodeKind>>(() => new Set(ALL_KINDS));
   const [selectedNode, setSelectedNode] = useState<AtlasNode | null>(null);
+  const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,10 +72,15 @@ export function App() {
     void loadAnalysis('/api/demo');
   }, [loadAnalysis]);
 
-  const graph = useMemo(() => {
-    if (!analysis) return { nodes: [] as Node<AtlasGraphNodeData>[], edges: [] as Edge[] };
-    return createFlowGraph(analysis.nodes, analysis.edges, visibleKinds, deferredSearch);
-  }, [analysis, visibleKinds, deferredSearch]);
+  const filteredGraph = useMemo(() => {
+    if (!analysis) return { nodes: [] as AtlasNode[], edges: [] as AtlasEdge[] };
+    return filterAtlasGraph(analysis.nodes, analysis.edges, visibleKinds);
+  }, [analysis, visibleKinds]);
+
+  const graph = useMemo(
+    () => createFlowGraph(filteredGraph.nodes, filteredGraph.edges, deferredSearch),
+    [deferredSearch, filteredGraph],
+  );
 
   const handleAnalyze = (event: React.FormEvent) => {
     event.preventDefault();
@@ -97,6 +104,10 @@ export function App() {
       else next.add(kind);
       return next;
     });
+  }, []);
+
+  const changeViewMode = useCallback((mode: '2d' | '3d') => {
+    startTransition(() => setViewMode(mode));
   }, []);
 
   if (!analysis && loading) {
@@ -129,8 +140,14 @@ export function App() {
           <button type="submit" disabled={loading || !projectPath.trim()}>{loading ? 'Анализ…' : 'Построить карту'}</button>
         </form>
         <div className="view-switch" aria-label="Режим карты">
-          <button className="is-active" type="button">2D</button>
-          <button type="button" title="Будет во второй части" disabled>3D</button>
+          <button className={viewMode === '2d' ? 'is-active' : ''} type="button" onClick={() => changeViewMode('2d')}>2D</button>
+          <button
+            className={viewMode === '3d' ? 'is-active' : ''}
+            type="button"
+            onMouseEnter={() => void import('./components/Graph3D')}
+            onFocus={() => void import('./components/Graph3D')}
+            onClick={() => changeViewMode('3d')}
+          >3D</button>
         </div>
       </header>
 
@@ -152,28 +169,40 @@ export function App() {
         {error ? <div className="error-banner">{error}<button type="button" onClick={() => setError(null)}>×</button></div> : null}
         {analysis.warnings.map((warning) => <div className="warning-banner" key={warning}>{warning}</div>)}
 
-        <ReactFlow
-          nodes={graph.nodes}
-          edges={graph.edges}
-          nodeTypes={nodeTypes}
-          onNodeClick={handleNodeClick}
-          onPaneClick={() => setSelectedNode(null)}
-          fitView
-          fitViewOptions={{ padding: 0.24 }}
-          minZoom={0.18}
-          maxZoom={1.8}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background variant={BackgroundVariant.Dots} color="#29303c" gap={22} size={1.2} />
-          <Controls position="bottom-center" showInteractive={false} />
-          <MiniMap
-            pannable
-            zoomable
-            position="bottom-right"
-            nodeColor={(node) => COLOR_BY_KIND[(node.data as AtlasGraphNodeData).atlas.kind]}
-            maskColor="rgba(6, 8, 13, .72)"
-          />
-        </ReactFlow>
+        {viewMode === '2d' ? (
+          <ReactFlow
+            nodes={graph.nodes}
+            edges={graph.edges}
+            nodeTypes={nodeTypes}
+            onNodeClick={handleNodeClick}
+            onPaneClick={() => setSelectedNode(null)}
+            fitView
+            fitViewOptions={{ padding: 0.24 }}
+            minZoom={0.18}
+            maxZoom={1.8}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background variant={BackgroundVariant.Dots} color="#29303c" gap={22} size={1.2} />
+            <Controls position="bottom-center" showInteractive={false} />
+            <MiniMap
+              pannable
+              zoomable
+              position="bottom-right"
+              nodeColor={(node) => COLOR_BY_KIND[(node.data as AtlasGraphNodeData).atlas.kind]}
+              maskColor="rgba(6, 8, 13, .72)"
+            />
+          </ReactFlow>
+        ) : (
+          <Suspense fallback={<div className="loading-overlay"><span />Загружаем 3D-движок…</div>}>
+            <Graph3D
+              nodes={filteredGraph.nodes}
+              edges={filteredGraph.edges}
+              search={deferredSearch}
+              selectedId={selectedNode?.id}
+              onSelect={setSelectedNode}
+            />
+          </Suspense>
+        )}
 
         {loading ? <div className="loading-overlay"><span />Анализируем исходники…</div> : null}
       </section>
@@ -195,10 +224,9 @@ function LoadingScreen({ label }: { label: string }) {
 function createFlowGraph(
   atlasNodes: AtlasNode[],
   atlasEdges: AtlasEdge[],
-  visibleKinds: Set<NodeKind>,
   search: string,
 ): { nodes: Node<AtlasGraphNodeData>[]; edges: Edge[] } {
-  const visibleAtlasNodes = atlasNodes.filter((node) => node.kind === 'project' || visibleKinds.has(node.kind));
+  const visibleAtlasNodes = atlasNodes;
   const visibleIds = new Set(visibleAtlasNodes.map((node) => node.id));
   const indexByColumn = new Map<number, number>();
   const matchingIds = new Set(
@@ -243,4 +271,17 @@ function createFlowGraph(
     }));
 
   return { nodes, edges };
+}
+
+function filterAtlasGraph(
+  nodes: AtlasNode[],
+  edges: AtlasEdge[],
+  visibleKinds: Set<NodeKind>,
+): { nodes: AtlasNode[]; edges: AtlasEdge[] } {
+  const visibleNodes = nodes.filter((node) => node.kind === 'project' || visibleKinds.has(node.kind));
+  const visibleIds = new Set(visibleNodes.map((node) => node.id));
+  return {
+    nodes: visibleNodes,
+    edges: edges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)),
+  };
 }

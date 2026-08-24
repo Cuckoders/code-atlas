@@ -5,6 +5,7 @@
 ## Что уже работает
 
 - интерактивная 2D-карта с панорамированием, масштабом, minimap и перетаскиванием узлов;
+- полноценная 3D-карта с orbit-навигацией, глубиной, перемещением узлов, фокусировкой камеры и общим инспектором;
 - импорт проекта по абсолютному локальному пути;
 - поиск и фильтры слоев;
 - сервисы по manifest-файлам (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, Maven/Gradle и другие);
@@ -25,6 +26,14 @@ npm run dev
 
 Откройте [http://localhost:5173](http://localhost:5173). При первом запуске появится демонстрационная карта. В верхней строке укажите абсолютный путь к любому локальному проекту и нажмите «Построить карту».
 
+Для запуска собранной версии одним локальным сервером:
+
+```bash
+npm run serve
+```
+
+После сборки откройте [http://127.0.0.1:4310](http://127.0.0.1:4310).
+
 ## Проверка
 
 ```bash
@@ -42,9 +51,9 @@ Browser / React Flow
 Fastify local API
         │
         ▼
-Static analyzer ──► normalized graph schema ──► 2D renderer
-      │                    │
-      ├─ manifests         └─ готово для будущего 3D renderer
+Static analyzer ──► normalized graph schema ──┬─► 2D renderer
+      │                                       └─► lazy 3D renderer
+      ├─ manifests
       ├─ source parsers
       └─ infra detectors
 ```
@@ -54,7 +63,6 @@ Static analyzer ──► normalized graph schema ──► 2D renderer
 ## Следующий этап
 
 1. Tree-sitter адаптеры и точное разрешение импортов для всех заявленных языков.
-2. 3D-режим на React Three Fiber с общей моделью графа.
-3. Git history/ownership, hotspots и дифф между ветками.
-4. Фоновое индексирование больших монорепозиториев и хранение снимков в SQLite.
-5. Desktop-оболочка Tauri для системного выбора папки.
+2. Git history/ownership, hotspots и дифф между ветками.
+3. Фоновое индексирование больших монорепозиториев и хранение снимков в SQLite.
+4. Desktop-оболочка Tauri для системного выбора папки.
