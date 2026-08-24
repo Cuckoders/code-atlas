@@ -8,7 +8,16 @@ export type NodeKind =
   | 'interface'
   | 'function';
 
-export type EdgeKind = 'contains' | 'imports' | 'uses';
+export type EdgeKind = 'contains' | 'imports' | 'calls' | 'uses';
+
+export type DiagnosticSeverity = 'error' | 'warning' | 'info';
+
+export type DiagnosticKind =
+  | 'dependency-cycle'
+  | 'high-coupling'
+  | 'cross-service-dependency'
+  | 'isolated-module'
+  | 'shared-database';
 
 export interface SymbolMember {
   name: string;
@@ -36,6 +45,16 @@ export interface AtlasEdge {
   label?: string;
 }
 
+export interface ProjectDiagnostic {
+  id: string;
+  kind: DiagnosticKind;
+  severity: DiagnosticSeverity;
+  title: string;
+  message: string;
+  nodeIds: string[];
+  edgeIds?: string[];
+}
+
 export interface LanguageStat {
   name: string;
   files: number;
@@ -61,5 +80,6 @@ export interface ProjectAnalysis {
   summary: ProjectSummary;
   nodes: AtlasNode[];
   edges: AtlasEdge[];
+  diagnostics: ProjectDiagnostic[];
   warnings: string[];
 }

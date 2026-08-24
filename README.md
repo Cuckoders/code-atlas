@@ -12,6 +12,10 @@
 - языковая статистика для TypeScript/JavaScript, Python, Java/Kotlin, Go, Rust, C#, PHP, Ruby, Swift, Dart и web-файлов;
 - глубокий разбор классов, интерфейсов, функций, методов, контроллеров и HTTP-маршрутов для TypeScript/JavaScript и Python;
 - Tree-sitter WASM AST-разбор типов, функций и методов для Java, Go, Rust, C# и PHP;
+- разрешение локальных импортов для TypeScript/JavaScript, Python, Java, Go modules, Rust `crate/self/super`, C# namespaces и PHP namespaces;
+- консервативный граф вызовов/создания объектов для символов TypeScript/JavaScript;
+- архитектурная диагностика циклов импортов, высокой связанности, межсервисных зависимостей, изолированных модулей и общей базы нескольких сервисов;
+- переход из списка диагностик к затронутому узлу и показ замечаний в инспекторе;
 - структурный fallback для Kotlin и остальных распознаваемых языков;
 - проваливание в подграф сервиса или модуля с breadcrumbs и сохранением внешних зависимостей;
 - обнаружение PostgreSQL, MySQL/MariaDB, MongoDB, Redis, SQLite, Elasticsearch и DynamoDB;
@@ -64,7 +68,7 @@ Static analyzer ──► normalized graph schema ──┬─► 2D renderer
 
 ## Следующий этап
 
-1. Точное разрешение package/module imports для Java, Go, Rust, C# и PHP.
+1. Семантический call graph через language servers для Java, Go, Rust, C# и PHP.
 2. Kotlin Tree-sitter WASM-адаптер.
 3. Git history/ownership, hotspots и дифф между ветками.
 4. Фоновое индексирование больших монорепозиториев и хранение снимков в SQLite.

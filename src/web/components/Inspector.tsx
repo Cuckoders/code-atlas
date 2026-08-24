@@ -1,10 +1,11 @@
-import type { AtlasNode, NodeKind } from '../../shared/graph';
+import type { AtlasNode, NodeKind, ProjectDiagnostic } from '../../shared/graph';
 
 interface InspectorProps {
   node: AtlasNode | null;
   onClose: () => void;
   canDive: boolean;
   onDive: () => void;
+  diagnostics: ProjectDiagnostic[];
 }
 
 const KIND_LABELS: Record<NodeKind, string> = {
@@ -18,7 +19,7 @@ const KIND_LABELS: Record<NodeKind, string> = {
   function: 'Функция',
 };
 
-export function Inspector({ node, onClose, canDive, onDive }: InspectorProps) {
+export function Inspector({ node, onClose, canDive, onDive, diagnostics }: InspectorProps) {
   return (
     <aside className={`inspector ${node ? 'inspector--open' : ''}`} aria-hidden={!node}>
       {node ? (
@@ -40,6 +41,20 @@ export function Inspector({ node, onClose, canDive, onDive }: InspectorProps) {
           ) : null}
           {node.subtitle ? (
             <div className="detail-row"><span>Тип</span><strong>{node.subtitle}</strong></div>
+          ) : null}
+
+          {diagnostics.length ? (
+            <section className="inspector__section">
+              <div className="section-heading"><h3>Диагностика</h3><span>{diagnostics.length}</span></div>
+              <div className="inspector-diagnostics">
+                {diagnostics.map((diagnostic) => (
+                  <article className={`diagnostic-card diagnostic-card--${diagnostic.severity}`} key={diagnostic.id}>
+                    <strong>{diagnostic.title}</strong>
+                    <p>{diagnostic.message}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
           ) : null}
 
           {node.members?.length ? (

@@ -10,7 +10,7 @@ import {
   type Node,
   type NodeMouseHandler,
 } from '@xyflow/react';
-import type { AtlasEdge, AtlasNode, NodeKind, ProjectAnalysis } from '../shared/graph';
+import type { AtlasEdge, AtlasNode, NodeKind, ProjectAnalysis, ProjectDiagnostic } from '../shared/graph';
 import { AtlasGraphNode, type AtlasGraphNodeData } from './components/AtlasGraphNode';
 import { Inspector } from './components/Inspector';
 import { ProjectSidebar } from './components/ProjectSidebar';
@@ -142,6 +142,19 @@ export function App() {
     });
   }, [diveableIds, selectedNode]);
 
+  const selectDiagnostic = useCallback((diagnostic: ProjectDiagnostic) => {
+    const target = analysis?.nodes.find((node) => diagnostic.nodeIds.includes(node.id));
+    if (!target) return;
+    startTransition(() => {
+      setFocusNode(null);
+      setSelectedNode(target);
+    });
+  }, [analysis]);
+
+  const selectedDiagnostics = useMemo(() => (
+    selectedNode ? analysis?.diagnostics.filter((item) => item.nodeIds.includes(selectedNode.id)) ?? [] : []
+  ), [analysis?.diagnostics, selectedNode]);
+
   if (!analysis && loading) {
     return <LoadingScreen label="Строим карту демонстрационного проекта" />;
   }
@@ -183,7 +196,13 @@ export function App() {
         </div>
       </header>
 
-      <ProjectSidebar summary={analysis.summary} visibleKinds={visibleKinds} onToggleKind={toggleKind} />
+      <ProjectSidebar
+        summary={analysis.summary}
+        diagnostics={analysis.diagnostics}
+        visibleKinds={visibleKinds}
+        onToggleKind={toggleKind}
+        onSelectDiagnostic={selectDiagnostic}
+      />
 
       <section className="canvas-shell">
         <div className="canvas-toolbar">
@@ -257,6 +276,7 @@ export function App() {
         onClose={() => setSelectedNode(null)}
         canDive={Boolean(selectedNode && diveableIds.has(selectedNode.id))}
         onDive={diveIntoSelected}
+        diagnostics={selectedDiagnostics}
       />
     </main>
   );
@@ -310,10 +330,10 @@ function createFlowGraph(
       target: item.target,
       label: item.kind === 'imports' ? undefined : item.kind,
       type: 'smoothstep',
-      animated: item.kind === 'imports',
+      animated: item.kind === 'imports' || item.kind === 'calls',
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
       style: {
-        stroke: item.kind === 'imports' ? '#416b8c' : item.kind === 'uses' ? '#9b6586' : '#3b4350',
+        stroke: item.kind === 'imports' ? '#416b8c' : item.kind === 'calls' ? '#d18b55' : item.kind === 'uses' ? '#9b6586' : '#3b4350',
         strokeWidth: item.kind === 'contains' ? 1 : 1.5,
       },
       labelStyle: { fill: '#667083', fontSize: 9 },

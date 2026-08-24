@@ -160,12 +160,12 @@ export default function Graph3D({ nodes, edges, search, selectedId, onSelect }: 
         nodeLabel={(node) => `${node.atlas.kind} · ${node.atlas.label}`}
         nodeThreeObject={createNodeObject}
         nodeThreeObjectExtend={false}
-        linkColor={(link) => link.kind === 'uses' ? '#a35d82' : link.kind === 'imports' ? '#3f739d' : '#3b4654'}
+        linkColor={(link) => link.kind === 'uses' ? '#a35d82' : link.kind === 'calls' ? '#d18b55' : link.kind === 'imports' ? '#3f739d' : '#3b4654'}
         linkWidth={(link) => link.kind === 'contains' ? 0.55 : 1.1}
         linkOpacity={0.42}
         linkDirectionalArrowLength={(link) => link.kind === 'contains' ? 1.6 : 2.7}
         linkDirectionalArrowRelPos={1}
-        linkDirectionalParticles={(link) => link.kind === 'imports' ? 1 : 0}
+        linkDirectionalParticles={(link) => link.kind === 'imports' || link.kind === 'calls' ? 1 : 0}
         linkDirectionalParticleColor={() => '#78b9e9'}
         linkDirectionalParticleSpeed={0.004}
         linkDirectionalParticleWidth={1.4}

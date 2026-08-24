@@ -1,9 +1,11 @@
-import type { NodeKind, ProjectSummary } from '../../shared/graph';
+import type { NodeKind, ProjectDiagnostic, ProjectSummary } from '../../shared/graph';
 
 interface ProjectSidebarProps {
   summary: ProjectSummary;
+  diagnostics: ProjectDiagnostic[];
   visibleKinds: Set<NodeKind>;
   onToggleKind: (kind: NodeKind) => void;
+  onSelectDiagnostic: (diagnostic: ProjectDiagnostic) => void;
 }
 
 const FILTERS: Array<{ kind: NodeKind; label: string }> = [
@@ -16,7 +18,13 @@ const FILTERS: Array<{ kind: NodeKind; label: string }> = [
   { kind: 'function', label: 'Функции' },
 ];
 
-export function ProjectSidebar({ summary, visibleKinds, onToggleKind }: ProjectSidebarProps) {
+export function ProjectSidebar({
+  summary,
+  diagnostics,
+  visibleKinds,
+  onToggleKind,
+  onSelectDiagnostic,
+}: ProjectSidebarProps) {
   return (
     <aside className="project-sidebar">
       <section>
@@ -51,6 +59,27 @@ export function ProjectSidebar({ summary, visibleKinds, onToggleKind }: ProjectS
           <div className="tag-list">{summary.technologies.map((item) => <span key={item}>{item}</span>)}</div>
         </section>
       ) : null}
+
+      <section className="sidebar-section diagnostics-section">
+        <div className="section-heading"><h2>Диагностика</h2><span>{diagnostics.length}</span></div>
+        {diagnostics.length ? (
+          <div className="diagnostic-list">
+            {diagnostics.slice(0, 6).map((diagnostic) => (
+              <button
+                type="button"
+                className={`diagnostic diagnostic--${diagnostic.severity}`}
+                key={diagnostic.id}
+                onClick={() => onSelectDiagnostic(diagnostic)}
+                title={diagnostic.message}
+              >
+                <i />
+                <span><strong>{diagnostic.title}</strong><small>{diagnostic.message}</small></span>
+              </button>
+            ))}
+            {diagnostics.length > 6 ? <p className="diagnostic-more">Ещё {diagnostics.length - 6}</p> : null}
+          </div>
+        ) : <p className="diagnostic-empty">Явных архитектурных рисков не найдено</p>}
+      </section>
 
       <section className="sidebar-section filters">
         <h2>Слои карты</h2>

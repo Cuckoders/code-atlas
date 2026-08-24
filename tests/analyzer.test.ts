@@ -1,3 +1,5 @@
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -24,6 +26,41 @@ describe('analyzeProject', () => {
     ))).toBe(true);
     expect(result.nodes.some((node) => node.label === 'OrderJob' && node.members?.some((member) => member.name === 'execute'))).toBe(true);
     expect(result.edges.some((edge) => edge.kind === 'imports')).toBe(true);
+    const nodeById = new Map(result.nodes.map((node) => [node.id, node]));
+    expect(result.edges.some((edge) => (
+      edge.kind === 'calls'
+      && nodeById.get(edge.source)?.label === 'registerCatalogRoutes'
+      && nodeById.get(edge.target)?.label === 'ProductRepository'
+    ))).toBe(true);
+    expect(result.diagnostics.some((diagnostic) => diagnostic.kind === 'isolated-module')).toBe(true);
+  });
+
+  it('resolves Java namespaces and reports import cycles', async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'code-atlas-cycle-'));
+    try {
+      await fs.writeFile(path.join(temporaryRoot, 'pom.xml'), '<project />');
+      await fs.mkdir(path.join(temporaryRoot, 'src', 'alpha'), { recursive: true });
+      await fs.mkdir(path.join(temporaryRoot, 'src', 'beta'), { recursive: true });
+      await fs.writeFile(path.join(temporaryRoot, 'src', 'alpha', 'Alpha.java'), `
+        package demo.alpha;
+        import demo.beta.Beta;
+        public class Alpha {}
+      `);
+      await fs.writeFile(path.join(temporaryRoot, 'src', 'beta', 'Beta.java'), `
+        package demo.beta;
+        import demo.alpha.Alpha;
+        public class Beta {}
+      `);
+
+      const result = await analyzeProject(temporaryRoot);
+      const importEdges = result.edges.filter((edge) => edge.kind === 'imports');
+      expect(importEdges).toHaveLength(2);
+      expect(result.diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'dependency-cycle', severity: 'error' }),
+      ]));
+    } finally {
+      await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
   });
 
   it('rejects a missing directory', async () => {

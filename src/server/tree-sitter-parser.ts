@@ -10,6 +10,13 @@ export interface ParsedSource {
     members: SymbolMember[];
   }>;
   imports: string[];
+  calls: Array<{
+    sourceSymbol: string;
+    targetSymbol: string;
+    importSpecifier?: string;
+    line: number;
+  }>;
+  namespace?: string;
   routes: SymbolMember[];
   parser: string;
 }
@@ -145,9 +152,24 @@ function extractSource(root: SyntaxNode, grammar: GrammarConfig): ParsedSource {
   return {
     symbols,
     imports: [...new Set(imports)],
+    calls: [],
+    namespace: extractNamespace(root.text, grammar.name),
     routes: [],
     parser: `Tree-sitter WASM · ${grammar.name}`,
   };
+}
+
+function extractNamespace(content: string, language: string): string | undefined {
+  const pattern = language === 'java'
+    ? /^\s*package\s+([\w.]+)\s*;/m
+    : language === 'c-sharp'
+      ? /^\s*namespace\s+([\w.]+)/m
+      : language === 'php'
+        ? /^\s*namespace\s+([\w\\]+)\s*;/m
+        : language === 'go'
+          ? /^\s*package\s+([A-Za-z_]\w*)/m
+          : null;
+  return pattern?.exec(content)?.[1];
 }
 
 function normalizeGoTypeNode(node: SyntaxNode, grammar: GrammarConfig): SyntaxNode {

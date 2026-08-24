@@ -77,6 +77,18 @@ button { color: inherit; }
 .language-bar i { display: block; height: 100%; background: linear-gradient(90deg, #5279a1, #7ec8f7); }
 .tag-list { display: flex; flex-wrap: wrap; gap: 5px; }
 .tag-list span { padding: 5px 7px; border: 1px solid #25302f; border-radius: 4px; color: #91b7ac; background: #101816; font: 8px 'DM Mono'; }
+.diagnostic-list { display: grid; gap: 5px; }
+.diagnostic { display: grid; grid-template-columns: 6px minmax(0, 1fr); gap: 8px; width: 100%; padding: 8px; border: 1px solid #272d37; border-radius: 6px; background: #10131a; text-align: left; cursor: pointer; }
+.diagnostic:hover { border-color: #3d4654; background: #131821; }
+.diagnostic > i { width: 5px; height: 5px; margin-top: 3px; border-radius: 50%; background: #728095; box-shadow: 0 0 7px currentColor; }
+.diagnostic--error > i { color: #eb6f83; background: #eb6f83; }
+.diagnostic--warning > i { color: #d7b65f; background: #d7b65f; }
+.diagnostic--info > i { color: #6da9dc; background: #6da9dc; }
+.diagnostic span { min-width: 0; }
+.diagnostic strong { display: block; color: #aeb8c6; font-size: 8px; }
+.diagnostic small { display: -webkit-box; margin-top: 3px; overflow: hidden; color: #596474; font-size: 7px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.diagnostic-empty, .diagnostic-more { margin: 0; color: #54606f; font-size: 8px; line-height: 1.45; }
+.diagnostic-more { padding-left: 8px; }
 .filters label { display: flex; align-items: center; gap: 8px; height: 22px; color: #7d8796; font-size: 10px; cursor: pointer; }
 .filters input { appearance: none; width: 10px; height: 10px; margin: 0; border: 1px solid #3a4351; border-radius: 2px; }
 .filters input:checked { border-color: #638d81; background: #7ee2c5; box-shadow: inset 0 0 0 2px #16201e; }
@@ -149,6 +161,13 @@ button { color: inherit; }
 .member__kind--route { color: #bf91ff; background: #20172a; }
 .member strong { display: block; color: #bdc5d0; font: 8px 'DM Mono'; overflow-wrap: anywhere; }
 .member small { color: #555f6e; font-size: 7px; }
+.inspector-diagnostics { display: grid; gap: 7px; }
+.diagnostic-card { padding: 10px; border: 1px solid #29313c; border-left-width: 2px; border-radius: 6px; background: #10141b; }
+.diagnostic-card--error { border-left-color: #eb6f83; }
+.diagnostic-card--warning { border-left-color: #d7b65f; }
+.diagnostic-card--info { border-left-color: #6da9dc; }
+.diagnostic-card strong { color: #bbc4d0; font-size: 9px; }
+.diagnostic-card p { margin: 5px 0 0; color: #667181; font-size: 8px; line-height: 1.5; }
 
 .error-banner, .warning-banner { position: absolute; z-index: 8; top: 62px; left: 50%; transform: translateX(-50%); max-width: 70%; padding: 8px 12px; border: 1px solid #653b47; border-radius: 6px; color: #efa5b6; background: #221218; font-size: 9px; }
 .warning-banner { border-color: #5c5030; color: #dec276; background: #211d12; }
