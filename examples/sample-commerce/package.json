@@ -1,0 +1,5 @@
+{
+  "name": "sample-commerce",
+  "private": true,
+  "workspaces": ["services/*"]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "commerce-api",
+  "dependencies": {
+    "fastify": "latest",
+    "pg": "latest",
+    "ioredis": "latest"
+  }
+}

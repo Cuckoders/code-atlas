@@ -1,0 +1,11 @@
+services:
+  api:
+    build: ./services/api
+    depends_on: [postgres, redis]
+  worker:
+    build: ./services/worker
+    depends_on: [redis]
+  postgres:
+    image: postgres:17
+  redis:
+    image: redis:8
