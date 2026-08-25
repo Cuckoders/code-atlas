@@ -4,6 +4,12 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { AnalysisSnapshotSummary, ProjectAnalysis, StoredAnalysisSnapshot } from '../shared/graph.js';
 import {
+  MAX_BLUEPRINT_JSON_SIZE,
+  validateArchitectureBlueprint,
+  type ArchitectureBlueprint,
+  type ArchitectureBlueprintDraft,
+} from '../shared/blueprint.js';
+import {
   MAX_PARSE_CACHE_JSON_SIZE,
   PARSER_CACHE_VERSION,
   parseCachedSource,
@@ -64,6 +70,11 @@ export class SnapshotStore implements ParseCache {
       );
       CREATE INDEX IF NOT EXISTS parsed_sources_last_used_at
         ON parsed_sources(last_used_at DESC);
+      CREATE TABLE IF NOT EXISTS architecture_blueprints (
+        project_path TEXT PRIMARY KEY,
+        updated_at TEXT NOT NULL,
+        blueprint_json TEXT NOT NULL
+      );
     `);
   }
 
@@ -184,6 +195,36 @@ export class SnapshotStore implements ParseCache {
       snapshot: toSummary(row),
       analysis: JSON.parse(row.analysis_json) as ProjectAnalysis,
     };
+  }
+
+  saveBlueprint(draft: ArchitectureBlueprintDraft): ArchitectureBlueprint {
+    const blueprint: ArchitectureBlueprint = { ...draft, updatedAt: new Date().toISOString() };
+    const validationError = validateArchitectureBlueprint(blueprint, true);
+    if (validationError) throw new Error(validationError);
+    const serialized = JSON.stringify(blueprint);
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_BLUEPRINT_JSON_SIZE) {
+      throw new Error('Blueprint слишком большой.');
+    }
+    this.database.prepare(`
+      INSERT INTO architecture_blueprints (project_path, updated_at, blueprint_json)
+      VALUES (?, ?, ?)
+      ON CONFLICT(project_path)
+      DO UPDATE SET updated_at = excluded.updated_at, blueprint_json = excluded.blueprint_json
+    `).run(blueprint.projectPath, blueprint.updatedAt, serialized);
+    return blueprint;
+  }
+
+  getBlueprint(projectPath: string): ArchitectureBlueprint | null {
+    const row = this.database.prepare(`
+      SELECT blueprint_json FROM architecture_blueprints WHERE project_path = ?
+    `).get(projectPath) as { blueprint_json?: unknown } | undefined;
+    if (typeof row?.blueprint_json !== 'string') return null;
+    try {
+      const parsed: unknown = JSON.parse(row.blueprint_json);
+      return validateArchitectureBlueprint(parsed, true) ? null : parsed as ArchitectureBlueprint;
+    } catch {
+      return null;
+    }
   }
 
   close(): void {

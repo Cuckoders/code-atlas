@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { analyzeProject } from '../src/server/analyzer.js';
 import { SnapshotStore } from '../src/server/snapshot-store.js';
+import type { ArchitectureBlueprintDraft } from '../src/shared/blueprint.js';
 
 describe('SnapshotStore', () => {
   it('reopens a persisted analysis from SQLite', async () => {
@@ -15,6 +16,19 @@ describe('SnapshotStore', () => {
       const analysis = await analyzeProject(fixturePath, { parseCache: firstStore });
       expect(analysis.summary.incremental).toEqual({ eligibleFiles: 7, reusedFiles: 0, parsedFiles: 7 });
       const summary = firstStore.save(analysis);
+      const blueprint: ArchitectureBlueprintDraft = {
+        version: 1,
+        projectPath: analysis.summary.rootPath,
+        nodes: [{
+          id: '123e4567-e89b-42d3-a456-426614174001',
+          label: 'Checkout API',
+          kind: 'service',
+          status: 'planned',
+          position: { x: 80, y: 120 },
+        }],
+        edges: [],
+      };
+      const savedBlueprint = firstStore.saveBlueprint(blueprint);
       firstStore.close();
 
       const reopenedStore = new SnapshotStore(databasePath);
@@ -23,6 +37,7 @@ describe('SnapshotStore', () => {
         snapshot: expect.objectContaining({ projectPath: analysis.summary.rootPath }),
         analysis: expect.objectContaining({ summary: analysis.summary }),
       }));
+      expect(reopenedStore.getBlueprint(analysis.summary.rootPath)).toEqual(savedBlueprint);
       const warmAnalysis = await analyzeProject(fixturePath, { parseCache: reopenedStore });
       expect(warmAnalysis.summary.incremental).toEqual({ eligibleFiles: 7, reusedFiles: 7, parsedFiles: 0 });
       reopenedStore.close();

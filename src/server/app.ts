@@ -7,6 +7,17 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import staticFiles from '@fastify/static';
 import type { AnalysisJobPriority, ProjectAnalysis } from '../shared/graph.js';
+import {
+  BLUEPRINT_EDGE_KINDS,
+  BLUEPRINT_NODE_KINDS,
+  BLUEPRINT_NODE_STATUSES,
+  BLUEPRINT_VERSION,
+  MAX_BLUEPRINT_EDGES,
+  MAX_BLUEPRINT_JSON_SIZE,
+  MAX_BLUEPRINT_NODES,
+  validateArchitectureBlueprint,
+  type ArchitectureBlueprintDraft,
+} from '../shared/blueprint.js';
 import type { RequestProbeInput, RequestProbeResult } from '../shared/request-trace.js';
 import { AnalysisQueue } from './analysis-queue.js';
 import { AnalysisError, analyzeProject, type AnalyzeProjectOptions } from './analyzer.js';
@@ -33,7 +44,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   await app.register(cors, {
     origin: /^(?:https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?|tauri:\/\/localhost|https?:\/\/tauri\.localhost)$/,
     allowedHeaders: ['content-type', 'x-code-atlas-token'],
-    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, { global: false });
@@ -161,6 +172,22 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     return snapshot ?? reply.status(404).send({ error: 'Снимок анализа не найден.' });
   });
 
+  app.get<{ Querystring: { projectPath: string } }>('/api/blueprints', {
+    schema: { querystring: blueprintQuerySchema },
+  }, async (request) => snapshots.getBlueprint(request.query.projectPath));
+
+  app.put<{ Body: ArchitectureBlueprintDraft }>('/api/blueprints', {
+    bodyLimit: MAX_BLUEPRINT_JSON_SIZE,
+    config: {
+      rateLimit: { max: 30, timeWindow: '1 minute' },
+    },
+    schema: { body: blueprintSchema },
+  }, async (request, reply) => {
+    const validationError = validateArchitectureBlueprint(request.body);
+    if (validationError) return reply.status(400).send({ error: validationError });
+    return snapshots.saveBlueprint(request.body);
+  });
+
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AnalysisError) {
       return reply.status(error.statusCode).send({ error: error.message });
@@ -224,5 +251,68 @@ const requestProbeSchema = {
       additionalProperties: { type: 'string', maxLength: 2_048, pattern: '^[^\\r\\n]*$' },
     },
     body: { type: 'string', maxLength: 12_288 },
+  },
+} as const;
+
+const blueprintQuerySchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['projectPath'],
+  properties: {
+    projectPath: { type: 'string', minLength: 1, maxLength: 4_096, pattern: '^[^\\u0000\\r\\n]+$' },
+  },
+} as const;
+
+const blueprintSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['version', 'projectPath', 'nodes', 'edges'],
+  properties: {
+    version: { const: BLUEPRINT_VERSION },
+    projectPath: { type: 'string', minLength: 1, maxLength: 4_096, pattern: '^[^\\u0000\\r\\n]+$' },
+    nodes: {
+      type: 'array',
+      maxItems: MAX_BLUEPRINT_NODES,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'label', 'kind', 'position', 'status'],
+        properties: {
+          id: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' },
+          label: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[^\\u0000\\r\\n]+$' },
+          kind: { type: 'string', enum: BLUEPRINT_NODE_KINDS },
+          status: { type: 'string', enum: BLUEPRINT_NODE_STATUSES },
+          position: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['x', 'y'],
+            properties: {
+              x: { type: 'number', minimum: -100_000, maximum: 100_000 },
+              y: { type: 'number', minimum: -100_000, maximum: 100_000 },
+            },
+          },
+          technology: { type: 'string', maxLength: 128, pattern: '^[^\\u0000\\r\\n]*$' },
+          language: { type: 'string', maxLength: 128, pattern: '^[^\\u0000\\r\\n]*$' },
+          owner: { type: 'string', maxLength: 128, pattern: '^[^\\u0000\\r\\n]*$' },
+          actualNodeId: { type: 'string', minLength: 1, maxLength: 1_024, pattern: '^[^\\u0000\\r\\n]+$' },
+        },
+      },
+    },
+    edges: {
+      type: 'array',
+      maxItems: MAX_BLUEPRINT_EDGES,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'source', 'target', 'kind'],
+        properties: {
+          id: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' },
+          source: { type: 'string' },
+          target: { type: 'string' },
+          kind: { type: 'string', enum: BLUEPRINT_EDGE_KINDS },
+          label: { type: 'string', maxLength: 128, pattern: '^[^\\u0000\\r\\n]*$' },
+        },
+      },
+    },
   },
 } as const;

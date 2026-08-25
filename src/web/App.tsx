@@ -37,6 +37,7 @@ import { layoutAtlasGraph, type GraphLayoutMode } from './graph-layout';
 const nodeTypes = { atlas: AtlasGraphNode, serviceZone: GraphZoneNode, layerZone: GraphZoneNode };
 const edgeTypes = { requestTrace: RequestTraceEdge };
 const Graph3D = lazy(() => import('./components/Graph3D'));
+const ArchitectureConstructor = lazy(() => import('./components/ArchitectureConstructor'));
 const ALL_KINDS: NodeKind[] = ['project', 'service', 'database', 'module', 'controller', 'class', 'interface', 'function'];
 
 const COLOR_BY_KIND: Record<NodeKind, string> = {
@@ -59,6 +60,7 @@ export function App() {
   const [selectedNode, setSelectedNode] = useState<AtlasNode | null>(null);
   const [focusNode, setFocusNode] = useState<AtlasNode | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
+  const [workspaceMode, setWorkspaceMode] = useState<'map' | 'constructor'>('map');
   const [loading, setLoading] = useState(true);
   const [jobStatus, setJobStatus] = useState<AnalysisJobStatus | null>(null);
   const [jobProgress, setJobProgress] = useState<AnalysisProgress | null>(null);
@@ -300,6 +302,12 @@ export function App() {
     startTransition(() => setViewMode(mode));
   }, []);
 
+  const changeWorkspaceMode = useCallback((mode: 'map' | 'constructor') => {
+    startTransition(() => setWorkspaceMode(mode));
+    setRequestPanelOpen(false);
+    setSelectedNode(null);
+  }, []);
+
   const diveIntoSelected = useCallback(() => {
     if (!selectedNode || !diveableIds.has(selectedNode.id)) return;
     startTransition(() => {
@@ -409,16 +417,18 @@ export function App() {
             </>
           )}
         </form>
-        <div className="view-switch" aria-label="Режим карты">
-          <button className={viewMode === '2d' ? 'is-active' : ''} type="button" onClick={() => changeViewMode('2d')}>2D</button>
-          <button
-            className={viewMode === '3d' ? 'is-active' : ''}
-            type="button"
-            onMouseEnter={() => void import('./components/Graph3D')}
-            onFocus={() => void import('./components/Graph3D')}
-            onClick={() => changeViewMode('3d')}
-          >3D</button>
-        </div>
+        {workspaceMode === 'map' ? (
+          <div className="view-switch" aria-label="Режим карты">
+            <button className={viewMode === '2d' ? 'is-active' : ''} type="button" onClick={() => changeViewMode('2d')}>2D</button>
+            <button
+              className={viewMode === '3d' ? 'is-active' : ''}
+              type="button"
+              onMouseEnter={() => void import('./components/Graph3D')}
+              onFocus={() => void import('./components/Graph3D')}
+              onClick={() => changeViewMode('3d')}
+            >3D</button>
+          </div>
+        ) : <div className="view-switch view-switch--blueprint"><span>Blueprint</span></div>}
       </header>
 
       <ProjectSidebar
@@ -434,27 +444,41 @@ export function App() {
         loading={loading}
       />
 
-      <section className={`canvas-shell ${requestPanelOpen ? 'is-request-panel-open' : ''}`}>
+      <section className={`canvas-shell ${workspaceMode === 'map' && requestPanelOpen ? 'is-request-panel-open' : ''}`}>
         <div className="canvas-toolbar">
           <div>
             <span className="pulse" />
-            <nav className="focus-breadcrumb" aria-label="Текущий уровень карты">
-              <button type="button" onClick={() => setFocusNode(null)}>Архитектурный граф</button>
-              {focusTrail.slice(1).map((node, index) => (
-                <span key={node.id}>
-                  <i>/</i>
-                  <button
-                    type="button"
-                    className={index === focusTrail.length - 2 ? 'is-current' : ''}
-                    onClick={() => setFocusNode(node)}
-                  >{node.label}</button>
-                </span>
-              ))}
-            </nav>
-            <small>{filteredGraph.nodes.length} узлов · {graph.edges.length} связей</small>
+            {workspaceMode === 'map' ? (
+              <>
+                <nav className="focus-breadcrumb" aria-label="Текущий уровень карты">
+                  <button type="button" onClick={() => setFocusNode(null)}>Архитектурный граф</button>
+                  {focusTrail.slice(1).map((node, index) => (
+                    <span key={node.id}>
+                      <i>/</i>
+                      <button
+                        type="button"
+                        className={index === focusTrail.length - 2 ? 'is-current' : ''}
+                        onClick={() => setFocusNode(node)}
+                      >{node.label}</button>
+                    </span>
+                  ))}
+                </nav>
+                <small>{filteredGraph.nodes.length} узлов · {graph.edges.length} связей</small>
+              </>
+            ) : <><strong className="blueprint-toolbar-title">Architecture Blueprint</strong><small>целевая архитектура · план ↔ факт</small></>}
           </div>
           <div className="canvas-toolbar__actions">
-            {viewMode === '2d' ? (
+            <div className="workspace-mode-toggle" role="group" aria-label="Рабочий режим">
+              <button type="button" className={workspaceMode === 'map' ? 'is-active' : ''} onClick={() => changeWorkspaceMode('map')}>Карта</button>
+              <button
+                type="button"
+                className={workspaceMode === 'constructor' ? 'is-active' : ''}
+                onMouseEnter={() => void import('./components/ArchitectureConstructor')}
+                onFocus={() => void import('./components/ArchitectureConstructor')}
+                onClick={() => changeWorkspaceMode('constructor')}
+              >Конструктор</button>
+            </div>
+            {workspaceMode === 'map' && viewMode === '2d' ? (
               <div className="graph-layout-toggle" role="group" aria-label="Раскладка 2D-карты">
                 <button
                   type="button"
@@ -470,26 +494,34 @@ export function App() {
                 >Слои</button>
               </div>
             ) : null}
-            <button
-              type="button"
-              className={`request-trace-toggle ${requestPanelOpen ? 'is-active' : ''}`}
-              aria-pressed={requestPanelOpen}
-              onClick={() => {
-                setSelectedNode(null);
-                setRequestPanelOpen((current) => !current);
-              }}
-            ><span>↗</span> Запрос</button>
-            <label className="search-field">
-              <span>⌕</span>
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Найти модуль, класс, путь…" />
-            </label>
+            {workspaceMode === 'map' ? (
+              <>
+                <button
+                  type="button"
+                  className={`request-trace-toggle ${requestPanelOpen ? 'is-active' : ''}`}
+                  aria-pressed={requestPanelOpen}
+                  onClick={() => {
+                    setSelectedNode(null);
+                    setRequestPanelOpen((current) => !current);
+                  }}
+                ><span>↗</span> Запрос</button>
+                <label className="search-field">
+                  <span>⌕</span>
+                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Найти модуль, класс, путь…" />
+                </label>
+              </>
+            ) : null}
           </div>
         </div>
 
         {error ? <div className="error-banner">{error}<button type="button" onClick={() => setError(null)}>×</button></div> : null}
         {analysis.warnings.map((warning) => <div className="warning-banner" key={warning}>{warning}</div>)}
 
-        {viewMode === '2d' ? (
+        {workspaceMode === 'constructor' ? (
+          <Suspense fallback={<div className="loading-overlay"><span />Загружаем конструктор…</div>}>
+            <ArchitectureConstructor key={analysis.summary.rootPath} analysis={analysis} />
+          </Suspense>
+        ) : viewMode === '2d' ? (
           <div className="graph-viewport">
             <ReactFlow
               key={`${graphLayoutMode}:${focusNode?.id ?? 'root'}:${requestPanelOpen ? 'trace-open' : 'trace-closed'}`}
@@ -567,24 +599,28 @@ export function App() {
           </div>
         ) : null}
 
-        <RequestTracePanel
-          key={`${analysis.summary.rootPath}:${activeSnapshotId ?? 'live'}`}
-          analysis={analysis}
-          open={requestPanelOpen}
-          trace={requestTrace}
-          onClose={() => setRequestPanelOpen(false)}
-          onTrace={handleRequestTrace}
-          onSelectNode={selectRequestTraceNode}
-        />
+        {workspaceMode === 'map' ? (
+          <RequestTracePanel
+            key={`${analysis.summary.rootPath}:${activeSnapshotId ?? 'live'}`}
+            analysis={analysis}
+            open={requestPanelOpen}
+            trace={requestTrace}
+            onClose={() => setRequestPanelOpen(false)}
+            onTrace={handleRequestTrace}
+            onSelectNode={selectRequestTraceNode}
+          />
+        ) : null}
       </section>
 
-      <Inspector
-        node={selectedNode}
-        onClose={() => setSelectedNode(null)}
-        canDive={Boolean(selectedNode && diveableIds.has(selectedNode.id))}
-        onDive={diveIntoSelected}
-        diagnostics={selectedDiagnostics}
-      />
+      {workspaceMode === 'map' ? (
+        <Inspector
+          node={selectedNode}
+          onClose={() => setSelectedNode(null)}
+          canDive={Boolean(selectedNode && diveableIds.has(selectedNode.id))}
+          onDive={diveIntoSelected}
+          diagnostics={selectedDiagnostics}
+        />
+      ) : null}
     </main>
   );
 }

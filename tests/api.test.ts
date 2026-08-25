@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { createApp } from '../src/server/app.js';
 import type { AnalysisJob, AnalysisSnapshotSummary, StoredAnalysisSnapshot } from '../src/shared/graph.js';
 import type { RequestProbeResult } from '../src/shared/request-trace.js';
+import type { ArchitectureBlueprint } from '../src/shared/blueprint.js';
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.resolve(currentDirectory, '../examples/sample-commerce');
@@ -225,6 +226,75 @@ describe('API', () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: 'Проверьте параметры запроса.' });
+  });
+
+  it('saves and loads a validated architecture blueprint', async () => {
+    app = await createApp({ logger: false, databasePath: ':memory:' });
+    const payload = {
+      version: 1,
+      projectPath: fixturePath,
+      nodes: [
+        {
+          id: '123e4567-e89b-42d3-a456-426614174001',
+          label: 'Public API',
+          kind: 'service',
+          status: 'approved',
+          position: { x: 120, y: 80 },
+          technology: 'Fastify',
+        },
+        {
+          id: '123e4567-e89b-42d3-a456-426614174002',
+          label: 'PostgreSQL',
+          kind: 'database',
+          status: 'planned',
+          position: { x: 420, y: 80 },
+        },
+      ],
+      edges: [{
+        id: '123e4567-e89b-42d3-a456-426614174003',
+        source: '123e4567-e89b-42d3-a456-426614174001',
+        target: '123e4567-e89b-42d3-a456-426614174002',
+        kind: 'writes',
+      }],
+    } as const;
+
+    const saved = await app.inject({ method: 'PUT', url: '/api/blueprints', payload });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json<ArchitectureBlueprint>()).toEqual({ ...payload, updatedAt: expect.any(String) });
+
+    const loaded = await app.inject({
+      method: 'GET',
+      url: `/api/blueprints?projectPath=${encodeURIComponent(fixturePath)}`,
+    });
+    expect(loaded.statusCode).toBe(200);
+    expect(loaded.json<ArchitectureBlueprint>()).toEqual(saved.json());
+  });
+
+  it('rejects blueprint connections to missing nodes', async () => {
+    app = await createApp({ logger: false, databasePath: ':memory:' });
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/blueprints',
+      payload: {
+        version: 1,
+        projectPath: fixturePath,
+        nodes: [{
+          id: '123e4567-e89b-42d3-a456-426614174001',
+          label: 'API',
+          kind: 'service',
+          status: 'planned',
+          position: { x: 0, y: 0 },
+        }],
+        edges: [{
+          id: '123e4567-e89b-42d3-a456-426614174003',
+          source: '123e4567-e89b-42d3-a456-426614174001',
+          target: '123e4567-e89b-42d3-a456-426614174099',
+          kind: 'depends',
+        }],
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: 'Связь должна соединять два существующих разных узла.' });
   });
 });
 
