@@ -230,6 +230,20 @@ function methodMember(node: SyntaxNode, name: string): SymbolMember {
     kind: 'method',
     signature: `${name}${truncate(parameters.replace(/\s+/g, ' '), 120)}${returnType ? `: ${truncate(returnType.replace(/\s+/g, ' '), 80)}` : ''}`,
     line: node.startPosition.row + 1,
+    ...sourceSnippet(node.text),
+  };
+}
+
+function sourceSnippet(value: string): Pick<SymbolMember, 'source' | 'sourceTruncated'> {
+  const maximumCharacters = 12_000;
+  const lines = value.replace(/\r\n?/g, '\n').split('\n');
+  const truncatedByLines = lines.length > 200;
+  let source = lines.slice(0, 200).join('\n');
+  const truncatedByCharacters = source.length > maximumCharacters;
+  if (truncatedByCharacters) source = source.slice(0, maximumCharacters);
+  return {
+    source,
+    ...((truncatedByLines || truncatedByCharacters) ? { sourceTruncated: true } : {}),
   };
 }
 

@@ -1,4 +1,4 @@
-import type { AtlasNode, NodeKind, NodeStructureDiff, ProjectDiagnostic, SymbolMember } from '../../shared/graph';
+import type { AtlasNode, NodeKind, NodeStructureDiff, ProjectDiagnostic, SourceDiffLine, SymbolMember } from '../../shared/graph';
 
 interface InspectorProps {
   node: AtlasNode | null;
@@ -115,6 +115,7 @@ function StructureDiff({ diff }: { diff: NodeStructureDiff }) {
               <strong>{change.name}</strong>
               <code className="member-diff__before">− {memberSignature(change.before)}</code>
               <code className="member-diff__after">+ {memberSignature(change.after)}</code>
+              {change.sourceDiff ? <SourceDiff lines={change.sourceDiff} truncated={Boolean(change.before.sourceTruncated || change.after.sourceTruncated)} /> : null}
             </div>
           </article>
         ))}
@@ -130,6 +131,7 @@ function MemberDiffCard({ status, member }: { status: 'added' | 'removed'; membe
       <div>
         <strong>{memberSignature(member)}</strong>
         <small>{status === 'added' ? 'Добавлено' : 'Удалено'} · {member.kind}</small>
+        {member.source ? <SourceDiff lines={singleSourceDiff(member, status)} truncated={Boolean(member.sourceTruncated)} /> : null}
       </div>
     </article>
   );
@@ -137,4 +139,31 @@ function MemberDiffCard({ status, member }: { status: 'added' | 'removed'; membe
 
 function memberSignature(member: SymbolMember): string {
   return member.signature ?? member.name;
+}
+
+function SourceDiff({ lines, truncated }: { lines: SourceDiffLine[]; truncated: boolean }) {
+  return (
+    <details className="source-diff">
+      <summary>Source diff <span>{lines.length} строк</span></summary>
+      <div className="source-diff__code">
+        {lines.map((line, index) => (
+          <div className={`source-line source-line--${line.kind}`} key={`${line.kind}:${line.beforeLine ?? 0}:${line.afterLine ?? 0}:${index}`}>
+            <span>{line.beforeLine ?? ''}</span>
+            <span>{line.afterLine ?? ''}</span>
+            <i>{line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : ' '}</i>
+            <code>{line.content || ' '}</code>
+          </div>
+        ))}
+        {truncated ? <p className="source-diff__truncated">Фрагмент ограничен безопасным лимитом</p> : null}
+      </div>
+    </details>
+  );
+}
+
+function singleSourceDiff(member: SymbolMember, status: 'added' | 'removed'): SourceDiffLine[] {
+  return (member.source ?? '').split('\n').map((content, index) => ({
+    kind: status,
+    content,
+    ...(status === 'added' ? { afterLine: index + 1 } : { beforeLine: index + 1 }),
+  }));
 }

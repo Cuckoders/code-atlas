@@ -10,6 +10,7 @@ import type {
   NodeStructureDiff,
   ProjectAnalysis,
   ProjectDiagnostic,
+  SourceDiffLine,
   SymbolMember,
 } from '../shared/graph.js';
 import {
@@ -23,6 +24,8 @@ import { parseWithTreeSitter, type ParsedSource } from './tree-sitter-parser.js'
 
 const MAX_FILES = 1_500;
 const MAX_FILE_SIZE = 512 * 1024;
+const MAX_MEMBER_SOURCE_CHARS = 12_000;
+const MAX_MEMBER_SOURCE_LINES = 200;
 
 const IGNORED_DIRECTORIES = new Set([
   '.git', '.idea', '.next', '.nuxt', '.turbo', '.venv', '.vscode',
@@ -490,10 +493,20 @@ function createStructureDiff(
   const baseByKey = new Map(baseMembers.map((member) => [memberKey(member), member]));
   const added = currentMembers.filter((member) => !baseByKey.has(memberKey(member)));
   const removed = baseMembers.filter((member) => !currentByKey.has(memberKey(member)));
-  const changed = currentMembers.flatMap((member) => {
+  const changed = currentMembers.flatMap((member): NodeStructureDiff['changed'] => {
     const before = baseByKey.get(memberKey(member));
-    if (!before || normalizedMemberSignature(before) === normalizedMemberSignature(member)) return [];
-    return [{ name: member.name, kind: member.kind, before, after: member }];
+    if (!before) return [];
+    const signatureChanged = normalizedMemberSignature(before) !== normalizedMemberSignature(member);
+    const sourceChanged = normalizedMemberSource(before) !== normalizedMemberSource(member);
+    if (!signatureChanged && !sourceChanged) return [];
+    const sourceDiff = createSourceDiff(before.source, member.source);
+    return [{
+      name: member.name,
+      kind: member.kind,
+      before,
+      after: member,
+      ...(sourceDiff ? { sourceDiff } : {}),
+    }];
   });
   return added.length || removed.length || changed.length ? { added, removed, changed } : undefined;
 }
@@ -504,6 +517,48 @@ function memberKey(member: SymbolMember): string {
 
 function normalizedMemberSignature(member: SymbolMember): string {
   return (member.signature ?? member.name).replace(/\s+/g, ' ').trim();
+}
+
+function normalizedMemberSource(member: SymbolMember): string {
+  return (member.source ?? '').split('\n').map((line) => line.trimEnd()).join('\n').trim();
+}
+
+function createSourceDiff(beforeSource: string | undefined, afterSource: string | undefined): SourceDiffLine[] | undefined {
+  if (beforeSource === undefined || afterSource === undefined) return undefined;
+  const before = beforeSource.split('\n').slice(0, MAX_MEMBER_SOURCE_LINES);
+  const after = afterSource.split('\n').slice(0, MAX_MEMBER_SOURCE_LINES);
+  const lengths = Array.from({ length: before.length + 1 }, () => new Uint16Array(after.length + 1));
+  for (let beforeIndex = before.length - 1; beforeIndex >= 0; beforeIndex -= 1) {
+    for (let afterIndex = after.length - 1; afterIndex >= 0; afterIndex -= 1) {
+      lengths[beforeIndex][afterIndex] = before[beforeIndex] === after[afterIndex]
+        ? lengths[beforeIndex + 1][afterIndex + 1] + 1
+        : Math.max(lengths[beforeIndex + 1][afterIndex], lengths[beforeIndex][afterIndex + 1]);
+    }
+  }
+  const diff: SourceDiffLine[] = [];
+  let beforeIndex = 0;
+  let afterIndex = 0;
+  while (beforeIndex < before.length || afterIndex < after.length) {
+    if (beforeIndex < before.length && afterIndex < after.length && before[beforeIndex] === after[afterIndex]) {
+      diff.push({
+        kind: 'context',
+        content: before[beforeIndex],
+        beforeLine: beforeIndex + 1,
+        afterLine: afterIndex + 1,
+      });
+      beforeIndex += 1;
+      afterIndex += 1;
+    } else if (beforeIndex < before.length && (
+      afterIndex >= after.length || lengths[beforeIndex + 1][afterIndex] >= lengths[beforeIndex][afterIndex + 1]
+    )) {
+      diff.push({ kind: 'removed', content: before[beforeIndex], beforeLine: beforeIndex + 1 });
+      beforeIndex += 1;
+    } else if (afterIndex < after.length) {
+      diff.push({ kind: 'added', content: after[afterIndex], afterLine: afterIndex + 1 });
+      afterIndex += 1;
+    }
+  }
+  return diff.some((line) => line.kind !== 'context') ? diff : undefined;
 }
 
 function stableNodeKey(node: AtlasNode): string {
@@ -528,6 +583,7 @@ function nodeFingerprint(node: AtlasNode): string {
       name: member.name,
       kind: member.kind,
       signature: member.signature,
+      source: member.source,
     })),
   });
 }
@@ -723,6 +779,7 @@ function parseTypeScript(fileName: string, content: string): ParsedSource {
           kind: 'method',
           signature: `${name}(${member.parameters.map((parameter) => parameter.getText(sourceFile)).join(', ')})${member.type ? `: ${member.type.getText(sourceFile)}` : ''}`,
           line: lineOf(sourceFile, member),
+          ...sourceSnippet(member.getText(sourceFile)),
         }];
       });
       const classText = statement.getFullText(sourceFile);
@@ -747,6 +804,7 @@ function parseTypeScript(fileName: string, content: string): ParsedSource {
             kind: 'property',
             signature: member.getText(sourceFile).replace(/;$/, ''),
             line: lineOf(sourceFile, member),
+            ...sourceSnippet(member.getText(sourceFile)),
           }];
         }),
       });
@@ -766,7 +824,12 @@ function parseTypeScript(fileName: string, content: string): ParsedSource {
   for (const match of content.matchAll(routePattern)) {
     const method = (match[1] ?? match[3] ?? 'route').toUpperCase();
     const route = match[2] ?? match[4] ?? '/';
-    routes.push({ name: `${method} ${route}`, kind: 'route' });
+    routes.push({
+      name: `${method} ${route}`,
+      kind: 'route',
+      line: lineFromOffset(content, match.index ?? 0),
+      ...sourceSnippet(match[0]),
+    });
   }
   return { symbols, imports: [...new Set(imports)], calls, routes, parser: 'TypeScript compiler API' };
 }
@@ -826,6 +889,7 @@ function parsePython(content: string): ParsedSource {
           kind: 'method',
           signature: `${methodMatch[1]}(${methodMatch[2]})${methodMatch[3] ? ` -> ${methodMatch[3].trim()}` : ''}`,
           line: nextIndex + 1,
+          ...sourceSnippet(extractPythonBlock(lines, nextIndex)),
         });
       }
       symbols.push({
@@ -840,9 +904,45 @@ function parsePython(content: string): ParsedSource {
     const importMatch = /^(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))/.exec(line);
     if (importMatch) imports.push(importMatch[1] ?? importMatch[2]);
     const routeMatch = /@(?:app|router)\.(get|post|put|patch|delete)\s*\(\s*['"]([^'"]+)/i.exec(line);
-    if (routeMatch) routes.push({ name: `${routeMatch[1].toUpperCase()} ${routeMatch[2]}`, kind: 'route', line: index + 1 });
+    if (routeMatch) routes.push({
+      name: `${routeMatch[1].toUpperCase()} ${routeMatch[2]}`,
+      kind: 'route',
+      line: index + 1,
+      ...sourceSnippet(line.trim()),
+    });
   });
   return { symbols, imports, calls: [], routes, parser: 'Python structural parser' };
+}
+
+function extractPythonBlock(lines: string[], startIndex: number): string {
+  const startLine = lines[startIndex] ?? '';
+  const indentation = startLine.length - startLine.trimStart().length;
+  let endIndex = startIndex + 1;
+  while (endIndex < lines.length) {
+    const line = lines[endIndex];
+    if (line.trim() && line.length - line.trimStart().length <= indentation) break;
+    endIndex += 1;
+  }
+  return lines.slice(startIndex, endIndex).join('\n');
+}
+
+function sourceSnippet(value: string): Pick<SymbolMember, 'source' | 'sourceTruncated'> {
+  const allLines = value.replace(/\r\n?/g, '\n').split('\n');
+  while (allLines[0]?.trim() === '') allLines.shift();
+  while (allLines.at(-1)?.trim() === '') allLines.pop();
+  const indentation = allLines
+    .filter((line) => line.trim())
+    .reduce((minimum, line) => Math.min(minimum, line.length - line.trimStart().length), Number.POSITIVE_INFINITY);
+  const normalizedLines = Number.isFinite(indentation)
+    ? allLines.map((line) => line.slice(Math.min(indentation, line.length)))
+    : allLines;
+  let truncated = normalizedLines.length > MAX_MEMBER_SOURCE_LINES;
+  let source = normalizedLines.slice(0, MAX_MEMBER_SOURCE_LINES).join('\n');
+  if (source.length > MAX_MEMBER_SOURCE_CHARS) {
+    source = source.slice(0, MAX_MEMBER_SOURCE_CHARS);
+    truncated = true;
+  }
+  return source ? { source, ...(truncated ? { sourceTruncated: true } : {}) } : {};
 }
 
 function parseGeneric(content: string, extension: string): ParsedSource {

@@ -21,6 +21,7 @@ describe('Git project analysis', () => {
       await fs.writeFile(path.join(temporaryRoot, 'service.ts'), `
         export class OrderService {
           run(input: string): boolean { return Boolean(input); }
+          health(): boolean { return false; }
         }
       `);
       await fs.writeFile(path.join(temporaryRoot, 'engine.ts'), `${sourceWithLines(205, 'first')}\nimport { LegacyService } from './legacy';\nexport const legacy = new LegacyService();`);
@@ -31,6 +32,7 @@ describe('Git project analysis', () => {
       await fs.writeFile(path.join(temporaryRoot, 'service.ts'), `
         export class OrderService {
           run(input: number): Promise<boolean> { return Promise.resolve(input > 0); }
+          health(): boolean { return true; }
           stop(reason?: string): void {}
         }
       `);
@@ -67,11 +69,22 @@ describe('Git project analysis', () => {
       ]));
       expect(result.nodes.find((node) => node.label === 'OrderService')?.structureDiff).toEqual(expect.objectContaining({
         added: [expect.objectContaining({ name: 'stop' })],
-        changed: [expect.objectContaining({
-          name: 'run',
-          before: expect.objectContaining({ signature: 'run(input: string): boolean' }),
-          after: expect.objectContaining({ signature: 'run(input: number): Promise<boolean>' }),
-        })],
+        changed: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'run',
+            before: expect.objectContaining({ signature: 'run(input: string): boolean' }),
+            after: expect.objectContaining({ signature: 'run(input: number): Promise<boolean>' }),
+          }),
+          expect.objectContaining({
+            name: 'health',
+            before: expect.objectContaining({ signature: 'health(): boolean' }),
+            after: expect.objectContaining({ signature: 'health(): boolean' }),
+            sourceDiff: expect.arrayContaining([
+              expect.objectContaining({ kind: 'removed', content: expect.stringContaining('return false') }),
+              expect.objectContaining({ kind: 'added', content: expect.stringContaining('return true') }),
+            ]),
+          }),
+        ]),
       }));
       expect(result.edges.some((edge) => edge.change === 'removed')).toBe(true);
     } finally {

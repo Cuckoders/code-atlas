@@ -191,6 +191,17 @@ button { color: inherit; }
 .member-diff--changed { border-left: 2px solid #5d9dce; }.member-diff--changed .member-diff__status { color: #79b8e8; background: #101d27; }
 .member-diff__before { margin-top: 4px; color: #b66775; text-decoration: line-through; }
 .member-diff__after { color: #78c99f; }
+.source-diff { grid-column: 1 / -1; margin-top: 7px; border: 1px solid #242c35; border-radius: 5px; overflow: hidden; }
+.source-diff summary { display: flex; justify-content: space-between; padding: 7px 8px; color: #7c8998; background: #0b0f14; font: 7px 'DM Mono'; cursor: pointer; list-style-position: inside; }
+.source-diff summary span { color: #4f5a68; }
+.source-diff__code { max-height: 240px; overflow: auto; padding: 5px 0; background: #090c11; }
+.source-line { display: grid; grid-template-columns: 24px 24px 12px minmax(max-content, 1fr); min-height: 17px; color: #778291; font: 7px/17px 'DM Mono'; }
+.source-line > span { color: #3f4955; text-align: right; padding-right: 6px; user-select: none; }
+.source-line > i { color: #56616e; font-style: normal; text-align: center; user-select: none; }
+.source-line code { padding-right: 8px; color: inherit; white-space: pre; }
+.source-line--added { color: #8bcba9; background: rgba(50, 126, 82, .13); }.source-line--added > i { color: #73c197; }
+.source-line--removed { color: #c77a87; background: rgba(137, 53, 67, .14); }.source-line--removed > i { color: #d26c7d; }
+.source-diff__truncated { margin: 5px 8px; color: #9b8351; font-size: 7px; }
 .inspector-diagnostics { display: grid; gap: 7px; }
 .diagnostic-card { padding: 10px; border: 1px solid #29313c; border-left-width: 2px; border-radius: 6px; background: #10141b; }
 .diagnostic-card--error { border-left-color: #eb6f83; }

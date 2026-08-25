@@ -51,6 +51,15 @@ export interface SymbolMember {
   kind: 'method' | 'property' | 'route';
   signature?: string;
   line?: number;
+  source?: string;
+  sourceTruncated?: boolean;
+}
+
+export interface SourceDiffLine {
+  kind: 'context' | 'added' | 'removed';
+  content: string;
+  beforeLine?: number;
+  afterLine?: number;
 }
 
 export interface ChangedSymbolMember {
@@ -58,6 +67,7 @@ export interface ChangedSymbolMember {
   kind: SymbolMember['kind'];
   before: SymbolMember;
   after: SymbolMember;
+  sourceDiff?: SourceDiffLine[];
 }
 
 export interface NodeStructureDiff {
