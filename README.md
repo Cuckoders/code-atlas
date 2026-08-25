@@ -78,6 +78,8 @@ Sidecar слушает случайный порт только на `127.0.0.1`
 
 Локальный macOS-бандл без настроенного Developer ID подходит для разработки. Для внешнего распространения необходимо выполнить signing и notarization в release-пайплайне.
 
+Нативная CI-матрица собирает DMG для macOS arm64/x64, AppImage/DEB для Linux x64 и MSI/NSIS для Windows x64. Проверочные артефакты остаются неподписанными; ручной release workflow требует Apple Developer ID, выполняет notarization и создаёт только черновик GitHub Release. Настройка секретов, Windows signing и безопасное подключение updater описаны в [docs/releasing.md](docs/releasing.md).
+
 ## Проверка
 
 ```bash
@@ -120,6 +122,6 @@ token-protected Fastify loopback API ──► priority queue ──► worker p
 
 ## Следующий этап
 
-1. Native release matrix для macOS, Windows и Linux: signing, notarization, CI-артефакты и автообновление.
+1. Подключить Windows Authenticode и Tauri updater после создания GitHub remote и выпуска ключей подписи.
 2. Опциональный sandboxed LSP-режим с явным согласием пользователя для более точного разрешения динамических вызовов.
 3. Swift Tree-sitter WASM-адаптер.

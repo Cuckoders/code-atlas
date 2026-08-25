@@ -10,6 +10,7 @@
     "desktop:build": "node scripts/run-tauri.mjs build --config src-tauri/tauri.prod.conf.json",
     "build": "tsc -p tsconfig.server.json && vite build",
     "build:sidecar": "node scripts/build-sidecar.mjs",
+    "release:verify": "node scripts/verify-release.mjs",
     "start": "node dist-server/server/index.js",
     "serve": "npm run build && NODE_ENV=production npm start",
     "test": "vitest run",
