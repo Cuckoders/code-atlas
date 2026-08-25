@@ -10,5 +10,28 @@ export interface BlueprintCodegenRequest {
 export interface BlueprintCodegenResult {
   outputDirectory: string;
   created: string[];
+  updated: string[];
+  skipped: string[];
+}
+
+export interface BlueprintScaffoldRequest {
+  blueprintName: string;
+  blueprint: ArchitectureBlueprintDraft;
+}
+
+export interface BlueprintScaffoldFile {
+  path: string;
+  contents: string;
+  overwrite: boolean;
+}
+
+export interface BlueprintScaffold {
+  folderName: string;
+  files: BlueprintScaffoldFile[];
+}
+
+export interface SavedBlueprintProject {
+  folderName: string;
+  written: string[];
   skipped: string[];
 }

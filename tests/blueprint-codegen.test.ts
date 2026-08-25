@@ -2,7 +2,8 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { BlueprintCodegenError, generateBlueprintCode } from '../src/server/blueprint-codegen.js';
+import { BlueprintCodegenError, createBlueprintScaffold, generateBlueprintCode } from '../src/server/blueprint-codegen.js';
+import { parseBlueprintFile } from '../src/shared/blueprint-file.js';
 import type { ArchitectureBlueprintDraft } from '../src/shared/blueprint.js';
 
 function createBlueprint(projectPath: string): ArchitectureBlueprintDraft {
@@ -41,7 +42,7 @@ function createBlueprint(projectPath: string): ArchitectureBlueprintDraft {
 }
 
 describe('blueprint code generation', () => {
-  it('creates safe scaffold files once and never overwrites them', async () => {
+  it('creates source files once while keeping the project manifest current', async () => {
     const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), 'code-atlas-codegen-'));
     try {
       const request = {
@@ -56,15 +57,41 @@ describe('blueprint code generation', () => {
       expect(first.created).toEqual(expect.arrayContaining([
         'generated/order-flow/order-api.ts',
         'generated/order-flow/order-service.ts',
-        'generated/order-flow/blueprint.generated.json',
+        'generated/order-flow/code-atlas.blueprint.json',
+        'generated/order-flow/README.md',
       ]));
       expect(second.created).toEqual([]);
-      expect(second.skipped).toEqual(first.created);
+      expect(second.updated).toEqual(expect.arrayContaining([
+        'generated/order-flow/code-atlas.blueprint.json',
+        'generated/order-flow/README.md',
+      ]));
+      expect(second.skipped).toEqual(expect.arrayContaining([
+        'generated/order-flow/order-api.ts',
+        'generated/order-flow/order-service.ts',
+      ]));
       await expect(fs.readFile(path.join(projectPath, 'generated/order-flow/order-api.ts'), 'utf8'))
         .resolves.toContain('orderAPIHandler');
+      const manifest = await fs.readFile(path.join(projectPath, 'generated/order-flow/code-atlas.blueprint.json'), 'utf8');
+      expect(parseBlueprintFile(manifest).blueprint).toEqual(createBlueprint(projectPath));
     } finally {
       await fs.rm(projectPath, { recursive: true, force: true });
     }
+  });
+
+  it('builds a portable folder with code, README and a complete map manifest', () => {
+    const blueprint = createBlueprint('/portable/source-project');
+    const scaffold = createBlueprintScaffold({ blueprintName: 'Order flow', blueprint });
+
+    expect(scaffold.folderName).toBe('order-flow');
+    expect(scaffold.files.map((file) => file.path)).toEqual(expect.arrayContaining([
+      'order-api.ts',
+      'order-service.ts',
+      'README.md',
+      'code-atlas.blueprint.json',
+    ]));
+    const manifest = scaffold.files.find((file) => file.path === 'code-atlas.blueprint.json');
+    expect(manifest?.overwrite).toBe(true);
+    expect(parseBlueprintFile(manifest?.contents ?? '').blueprint).toEqual(blueprint);
   });
 
   it('rejects paths outside the project and symlinked output folders', async () => {

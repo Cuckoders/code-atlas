@@ -1,8 +1,14 @@
 import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { BlueprintCodegenRequest, BlueprintCodegenResult } from '../shared/blueprint-codegen.js';
+import type {
+  BlueprintCodegenRequest,
+  BlueprintCodegenResult,
+  BlueprintScaffold,
+  BlueprintScaffoldRequest,
+} from '../shared/blueprint-codegen.js';
 import type { BlueprintCodeTemplate, BlueprintEdge, BlueprintNode } from '../shared/blueprint.js';
 import { validateArchitectureBlueprint } from '../shared/blueprint.js';
+import { serializeBlueprintFile } from '../shared/blueprint-file.js';
 
 const SAFE_DIRECTORY_SEGMENT = /^[A-Za-z0-9._-]{1,80}$/;
 
@@ -32,47 +38,66 @@ export async function generateBlueprintCode(request: BlueprintCodegenRequest): P
     throw new BlueprintCodegenError('Корневая папка проекта больше не существует.', 404);
   }
   const outputRoot = await createContainedDirectory(projectRoot, segments);
-  const generatedNodes = request.blueprint.nodes.filter((node) => node.codegen?.enabled !== false && isCodeNode(node));
-  const edgesBySource = indexEdges(request.blueprint.edges);
-  const nodeById = new Map(request.blueprint.nodes.map((node) => [node.id, node]));
-  const usedNames = new Set<string>();
+  const scaffold = createBlueprintScaffold({ blueprintName: request.blueprintName, blueprint: request.blueprint });
   const created: string[] = [];
+  const updated: string[] = [];
   const skipped: string[] = [];
 
-  for (const node of generatedNodes) {
-    const extension = languageExtension(node.language);
-    const configuredName = node.codegen?.fileName;
-    const baseName = configuredName ? stripKnownExtension(configuredName) : slug(node.label) || `component-${node.id.slice(0, 8)}`;
-    const fileName = uniqueFileName(`${baseName}${extension}`, usedNames, node.id);
-    const relativePath = path.posix.join(...segments, fileName);
-    const dependencies = (edgesBySource.get(node.id) ?? [])
-      .map((edge) => nodeById.get(edge.target))
-      .filter((dependency): dependency is BlueprintNode => Boolean(dependency));
-    const source = renderNode(node, dependencies, node.codegen?.template ?? 'auto');
+  for (const file of scaffold.files) {
+    const relativePath = path.posix.join(...segments, file.path);
+    const targetPath = path.join(outputRoot, ...file.path.split('/'));
+    const existed = file.overwrite && await validateOverwriteTarget(targetPath);
     try {
-      await writeFile(path.join(outputRoot, fileName), source, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-      created.push(relativePath);
+      await writeFile(targetPath, file.contents, { encoding: 'utf8', flag: file.overwrite ? 'w' : 'wx', mode: 0o600 });
+      (existed ? updated : created).push(relativePath);
     } catch (error) {
       if (isFileExistsError(error)) skipped.push(relativePath);
       else throw error;
     }
   }
 
-  const manifestPath = path.posix.join(...segments, 'blueprint.generated.json');
-  try {
-    await writeFile(path.join(outputRoot, 'blueprint.generated.json'), JSON.stringify({
-      blueprint: request.blueprintName,
-      generatedAt: new Date().toISOString(),
-      nodes: generatedNodes.map((node) => ({ id: node.id, label: node.label, kind: node.kind })),
-      edges: request.blueprint.edges,
-    }, null, 2), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-    created.push(manifestPath);
-  } catch (error) {
-    if (isFileExistsError(error)) skipped.push(manifestPath);
-    else throw error;
-  }
+  return { outputDirectory: path.posix.join(...segments), created, updated, skipped };
+}
 
-  return { outputDirectory: path.posix.join(...segments), created, skipped };
+export function createBlueprintScaffold(request: BlueprintScaffoldRequest): BlueprintScaffold {
+  const validationError = validateArchitectureBlueprint(request.blueprint);
+  if (validationError) throw new BlueprintCodegenError(validationError);
+  const blueprintName = request.blueprintName.trim() || 'Blueprint';
+  const generatedNodes = request.blueprint.nodes.filter((node) => node.codegen?.enabled !== false && isCodeNode(node));
+  const edgesBySource = indexEdges(request.blueprint.edges);
+  const nodeById = new Map(request.blueprint.nodes.map((node) => [node.id, node]));
+  const usedNames = new Set<string>();
+  const sourceFiles = generatedNodes.map((node) => {
+    const extension = languageExtension(node.language);
+    const configuredName = node.codegen?.fileName;
+    const baseName = configuredName ? stripKnownExtension(configuredName) : slug(node.label) || `component-${node.id.slice(0, 8)}`;
+    const fileName = uniqueFileName(`${baseName}${extension}`, usedNames, node.id);
+    const dependencies = (edgesBySource.get(node.id) ?? [])
+      .map((edge) => nodeById.get(edge.target))
+      .filter((dependency): dependency is BlueprintNode => Boolean(dependency));
+    return {
+      path: fileName,
+      contents: renderNode(node, dependencies, node.codegen?.template ?? 'auto'),
+      overwrite: false,
+    };
+  });
+  const fileList = sourceFiles.map((file) => `- \`${file.path}\``).join('\n') || '- Кодовые компоненты пока не добавлены.';
+  return {
+    folderName: slug(blueprintName) || 'blueprint-project',
+    files: [
+      ...sourceFiles,
+      {
+        path: 'code-atlas.blueprint.json',
+        contents: serializeBlueprintFile(blueprintName, request.blueprint),
+        overwrite: true,
+      },
+      {
+        path: 'README.md',
+        contents: `# ${blueprintName}\n\nПроект создан в Code Atlas. Чтобы снова открыть архитектурную карту, выберите эту папку через «Открыть Blueprint».\n\n## Сгенерированные файлы\n\n${fileList}\n`,
+        overwrite: true,
+      },
+    ],
+  };
 }
 
 async function createContainedDirectory(projectRoot: string, segments: string[]): Promise<string> {
@@ -254,4 +279,17 @@ function isNotFoundError(error: unknown): boolean {
 
 function isFileExistsError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST';
+}
+
+async function validateOverwriteTarget(filePath: string): Promise<boolean> {
+  try {
+    const stats = await lstat(filePath);
+    if (stats.isSymbolicLink() || !stats.isFile()) {
+      throw new BlueprintCodegenError('Служебный файл Blueprint содержит ссылку или не является файлом.');
+    }
+    return true;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    throw error;
+  }
 }

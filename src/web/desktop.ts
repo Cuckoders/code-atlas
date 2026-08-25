@@ -1,5 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { BLUEPRINT_FILE_EXTENSION, MAX_BLUEPRINT_FILE_SIZE } from '../shared/blueprint-file';
+import type { BlueprintScaffold, SavedBlueprintProject } from '../shared/blueprint-codegen';
 
 interface BackendConnection {
   origin: string;
@@ -101,6 +102,142 @@ export async function chooseBlueprintFile(): Promise<{ name: string; contents: s
         return;
       }
       file.text().then((contents) => resolve({ name: file.name, contents }), reject);
+    };
+    input.click();
+  });
+}
+
+interface BrowserFileHandle {
+  getFile: () => Promise<File>;
+  createWritable: () => Promise<{ write: (value: string) => Promise<void>; close: () => Promise<void> }>;
+}
+
+interface BrowserDirectoryHandle {
+  name: string;
+  getDirectoryHandle: (name: string, options?: { create?: boolean }) => Promise<BrowserDirectoryHandle>;
+  getFileHandle: (name: string, options?: { create?: boolean }) => Promise<BrowserFileHandle>;
+}
+
+type DirectoryPickerWindow = Window & {
+  showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<BrowserDirectoryHandle>;
+};
+
+export async function saveBlueprintProject(scaffold: BlueprintScaffold): Promise<SavedBlueprintProject | null> {
+  if (isTauri()) {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const parentPath = await open({
+      title: 'Куда сохранить папку Blueprint',
+      directory: true,
+      multiple: false,
+      recursive: true,
+      canCreateDirectories: true,
+    });
+    if (typeof parentPath !== 'string') return null;
+    return invoke<SavedBlueprintProject>('write_blueprint_project', {
+      parentPath,
+      folderName: scaffold.folderName,
+      files: scaffold.files,
+    });
+  }
+
+  const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
+  if (!picker) throw new Error('Браузер не поддерживает сохранение папок. Откройте Code Atlas в Chrome/Edge или используйте desktop-версию.');
+  try {
+    const parent = await picker({ mode: 'readwrite' });
+    const destination = await parent.getDirectoryHandle(scaffold.folderName, { create: true });
+    const written: string[] = [];
+    const skipped: string[] = [];
+    for (const file of scaffold.files) {
+      const parts = file.path.split('/');
+      const fileName = parts.pop();
+      if (!fileName) continue;
+      let directory = destination;
+      for (const part of parts) directory = await directory.getDirectoryHandle(part, { create: true });
+      if (!file.overwrite && await browserFileExists(directory, fileName)) {
+        skipped.push(file.path);
+        continue;
+      }
+      const handle = await directory.getFileHandle(fileName, { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(file.contents);
+      await writable.close();
+      written.push(file.path);
+    }
+    return { folderName: scaffold.folderName, written, skipped };
+  } catch (pickerError) {
+    if (pickerError instanceof DOMException && pickerError.name === 'AbortError') return null;
+    throw pickerError;
+  }
+}
+
+export async function chooseBlueprintProject(): Promise<{ name: string; contents: string } | null> {
+  if (isTauri()) {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const selectedPath = await open({
+      title: 'Открыть папку Blueprint',
+      directory: true,
+      multiple: false,
+      recursive: true,
+      canCreateDirectories: false,
+    });
+    if (typeof selectedPath !== 'string') return null;
+    return {
+      name: selectedPath.split(/[\\/]/).at(-1) ?? 'Blueprint',
+      contents: await invoke<string>('read_blueprint_project', { path: selectedPath }),
+    };
+  }
+
+  const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
+  if (picker) {
+    try {
+      const directory = await picker({ mode: 'read' });
+      const manifest = await directory.getFileHandle('code-atlas.blueprint.json');
+      const file = await manifest.getFile();
+      if (file.size > MAX_BLUEPRINT_FILE_SIZE) throw new Error('Манифест Blueprint слишком большой.');
+      return { name: directory.name, contents: await file.text() };
+    } catch (pickerError) {
+      if (pickerError instanceof DOMException && pickerError.name === 'AbortError') return null;
+      if (pickerError instanceof DOMException && pickerError.name === 'NotFoundError') {
+        throw new Error('В выбранной папке нет code-atlas.blueprint.json. Сохраните Blueprint как проект заново.');
+      }
+      throw pickerError;
+    }
+  }
+
+  return chooseBlueprintDirectoryUpload();
+}
+
+async function browserFileExists(directory: BrowserDirectoryHandle, name: string): Promise<boolean> {
+  try {
+    await directory.getFileHandle(name);
+    return true;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'NotFoundError') return false;
+    throw error;
+  }
+}
+
+function chooseBlueprintDirectoryUpload(): Promise<{ name: string; contents: string } | null> {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.setAttribute('webkitdirectory', '');
+    input.oncancel = () => resolve(null);
+    input.onchange = () => {
+      const files = [...(input.files ?? [])];
+      const manifest = files.find((file) => file.name === 'code-atlas.blueprint.json');
+      if (!manifest) {
+        reject(new Error('В выбранной папке нет code-atlas.blueprint.json.'));
+        return;
+      }
+      if (manifest.size > MAX_BLUEPRINT_FILE_SIZE) {
+        reject(new Error('Манифест Blueprint слишком большой.'));
+        return;
+      }
+      const relativePath = (manifest as File & { webkitRelativePath?: string }).webkitRelativePath ?? '';
+      const folderName = relativePath.split('/')[0] || 'Blueprint';
+      manifest.text().then((contents) => resolve({ name: folderName, contents }), reject);
     };
     input.click();
   });

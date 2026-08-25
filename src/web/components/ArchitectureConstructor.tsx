@@ -35,11 +35,11 @@ import {
   type BlueprintNodeKind,
   type BlueprintNodeStatus,
 } from '../../shared/blueprint';
-import { blueprintFileName, serializeBlueprintFile } from '../../shared/blueprint-file';
+import type { BlueprintScaffold } from '../../shared/blueprint-codegen';
 import type { BlueprintSimulationResult } from '../../shared/blueprint-simulation';
 import type { AtlasNode, NodeKind, ProjectAnalysis } from '../../shared/graph';
 import type { BlueprintPreset } from '../../shared/blueprint-presets';
-import { apiFetch, saveBlueprintFile } from '../desktop';
+import { apiFetch, saveBlueprintProject } from '../desktop';
 import {
   calculateBlueprintImpact,
   findBlueprintMatchSuggestions,
@@ -314,17 +314,27 @@ export default function ArchitectureConstructor({ analysis, onOpenOnMap }: Archi
     onOpenOnMap(source, saved?.name ?? blueprintName, saved?.id ?? activeBlueprintId);
   }, [activeBlueprintId, blueprintName, dirty, onOpenOnMap, save]);
 
-  const exportToFile = useCallback(async () => {
-    setMessage('Выберите папку для Blueprint…');
+  const exportProject = useCallback(async () => {
+    setMessage('Подготавливаем папку проекта…');
     try {
-      const saved = await saveBlueprintFile(
-        blueprintFileName(blueprintName),
-        serializeBlueprintFile(blueprintName, documentRef.current),
-      );
-      setMessage(saved ? 'Blueprint сохранён в файл.' : 'Сохранение файла отменено.');
+      const response = await apiFetch('/api/blueprints/scaffold', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ blueprintName, blueprint: documentRef.current }),
+      });
+      const payload = await response.json() as BlueprintScaffold | { error: string };
+      if (!response.ok || 'error' in payload) throw new Error('error' in payload ? payload.error : 'Не удалось подготовить проект.');
+      setMessage('Выберите папку, внутри неё будет создан проект…');
+      const saved = await saveBlueprintProject(payload);
+      if (!saved) {
+        setMessage('Сохранение проекта отменено.');
+        return;
+      }
+      const skipped = saved.skipped.length ? ` · ${saved.skipped.length} изменённых файлов не перезаписано` : '';
+      setMessage(`Папка ${saved.folderName} сохранена · ${saved.written.length} файлов${skipped}`);
     } catch (exportError) {
       setSaveState('error');
-      setMessage(exportError instanceof Error ? exportError.message : 'Не удалось сохранить файл Blueprint.');
+      setMessage(exportError instanceof Error ? exportError.message : 'Не удалось сохранить папку Blueprint.');
     }
   }, [blueprintName]);
 
@@ -636,7 +646,7 @@ export default function ArchitectureConstructor({ analysis, onOpenOnMap }: Archi
           <button type="button" className="blueprint-import" onClick={importActual}>Импортировать факт</button>
           <button type="button" className={simulationOpen ? 'is-active' : ''} disabled={document.nodes.length === 0} onClick={() => { setSimulationOpen((open) => !open); setCodegenOpen(false); }}>▶ Запустить</button>
           <button type="button" className={codegenOpen ? 'is-active' : ''} disabled={document.nodes.length === 0} onClick={() => { setCodegenOpen((open) => !open); setSimulationOpen(false); }}>⌘ Код</button>
-          <button type="button" className="blueprint-export" title="Сохранить Blueprint в файл" disabled={document.nodes.length === 0} onClick={() => void exportToFile()}>↓ <span>Файл</span></button>
+          <button type="button" className="blueprint-export" title="Создать папку проекта с кодом" disabled={document.nodes.length === 0} onClick={() => void exportProject()}>↓ <span>Папка с кодом</span></button>
           <button type="button" className="blueprint-open-map" title="Открыть Blueprint на основной карте" disabled={document.nodes.length === 0 || saveState === 'saving' || saveState === 'loading'} onClick={() => void openOnMap()}>⌘ <span>Открыть на карте</span></button>
         </div>
         <div className="blueprint-drift" aria-label="Архитектурный drift">

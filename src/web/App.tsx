@@ -27,7 +27,7 @@ import type {
   ProjectDiagnostic,
   StoredAnalysisSnapshot,
 } from '../shared/graph';
-import type { ArchitectureBlueprintDraft } from '../shared/blueprint';
+import type { ArchitectureBlueprintDraft, BlueprintDocument } from '../shared/blueprint';
 import { parseBlueprintFile } from '../shared/blueprint-file';
 import type { RequestTrace } from '../shared/request-trace';
 import type { SourceEditor } from '../shared/source-editor';
@@ -39,7 +39,7 @@ import { MapFilters } from './components/MapFilters';
 import { ProjectSidebar } from './components/ProjectSidebar';
 import { RequestTraceEdge, type RequestTraceEdgeData } from './components/RequestTraceEdge';
 import { RequestTracePanel } from './components/RequestTracePanel';
-import { apiFetch, chooseBlueprintFile, chooseProjectDirectory, hasNativeDirectoryPicker } from './desktop';
+import { apiFetch, chooseBlueprintProject, chooseProjectDirectory, hasNativeDirectoryPicker } from './desktop';
 import { layoutAtlasGraph, type GraphLayoutMode } from './graph-layout';
 import { openNodeInEditor, sourceLocationForNode } from './source-editor';
 import type { TracePlaybackOptions } from './trace-playback';
@@ -49,6 +49,7 @@ const edgeTypes = { requestTrace: RequestTraceEdge };
 const Graph3D = lazy(() => import('./components/Graph3D'));
 const ArchitectureConstructor = lazy(() => import('./components/ArchitectureConstructor'));
 const BlueprintMapView = lazy(() => import('./components/BlueprintMapView'));
+const BlueprintLibrary = lazy(() => import('./components/BlueprintLibrary'));
 const SnapshotLibrary = lazy(() => import('./components/SnapshotLibrary'));
 const RuntimeTracePanel = lazy(() => import('./components/RuntimeTracePanel'));
 const ALL_KINDS: NodeKind[] = ['project', 'service', 'database', 'module', 'controller', 'class', 'interface', 'function'];
@@ -90,6 +91,7 @@ export function App() {
   const [snapshots, setSnapshots] = useState<AnalysisSnapshotSummary[]>([]);
   const [activeSnapshotId, setActiveSnapshotId] = useState<string | null>(null);
   const [snapshotLibraryOpen, setSnapshotLibraryOpen] = useState(false);
+  const [blueprintLibraryOpen, setBlueprintLibraryOpen] = useState(false);
   const [snapshotBusyId, setSnapshotBusyId] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -454,16 +456,26 @@ export function App() {
     setMapSelectedIds(new Set());
   }, []);
 
-  const openBlueprintFromFile = useCallback(async () => {
+  const openBlueprintFromProject = useCallback(async () => {
     setError(null);
     try {
-      const selectedFile = await chooseBlueprintFile();
-      if (!selectedFile) return;
-      const opened = parseBlueprintFile(selectedFile.contents, selectedFile.name);
+      const selectedProject = await chooseBlueprintProject();
+      if (!selectedProject) return;
+      const opened = parseBlueprintFile(selectedProject.contents, selectedProject.name);
       openBlueprintOnMap(opened.blueprint, opened.name, null);
     } catch (openError) {
-      setError(openError instanceof Error ? openError.message : 'Не удалось открыть файл Blueprint.');
+      setError(openError instanceof Error ? openError.message : 'Не удалось открыть папку Blueprint.');
     }
+  }, [openBlueprintOnMap]);
+
+  const openSavedBlueprintOnMap = useCallback((saved: BlueprintDocument) => {
+    openBlueprintOnMap({
+      version: saved.version,
+      projectPath: saved.projectPath,
+      nodes: saved.nodes,
+      edges: saved.edges,
+    }, saved.name, saved.id);
+    setBlueprintLibraryOpen(false);
   }, [openBlueprintOnMap]);
 
   const openActualMap = useCallback(() => {
@@ -661,7 +673,14 @@ export function App() {
               onFocus={() => void import('./components/SnapshotLibrary')}
               onClick={() => setSnapshotLibraryOpen(true)}
             ><span aria-hidden="true">◷</span><b>Снимки</b><i>{snapshots.length}</i></button>
-            <button type="button" className="blueprint-file-open" title="Открыть Blueprint из файла" onClick={() => void openBlueprintFromFile()}><span aria-hidden="true">↥</span><b>Открыть Blueprint</b></button>
+            <button
+              type="button"
+              className={`blueprint-library-trigger ${blueprintLibraryOpen ? 'is-active' : ''}`}
+              onMouseEnter={() => void import('./components/BlueprintLibrary')}
+              onFocus={() => void import('./components/BlueprintLibrary')}
+              onClick={() => setBlueprintLibraryOpen(true)}
+            ><span aria-hidden="true">▤</span><b>Blueprints</b></button>
+            <button type="button" className="blueprint-file-open" title="Открыть папку Blueprint с кодом" onClick={() => void openBlueprintFromProject()}><span aria-hidden="true">↥</span><b>Открыть папку</b></button>
             {workspaceMode === 'map' && mapBlueprint ? (
               <div className="map-source-toggle" role="group" aria-label="Источник карты">
                 <button type="button" className={mapSource === 'analysis' ? 'is-active' : ''} onClick={openActualMap}>Код</button>
@@ -868,6 +887,17 @@ export function App() {
               onOpen={(snapshotId) => void openSnapshot(snapshotId)}
               onDelete={(snapshot) => void deleteSnapshot(snapshot)}
               onClose={() => setSnapshotLibraryOpen(false)}
+            />
+          </Suspense>
+        ) : null}
+        {blueprintLibraryOpen ? (
+          <Suspense fallback={null}>
+            <BlueprintLibrary
+              projectPath={analysis.summary.rootPath}
+              activeId={mapBlueprint?.id ?? null}
+              openLabel="Открыть на карте"
+              onOpen={openSavedBlueprintOnMap}
+              onClose={() => setBlueprintLibraryOpen(false)}
             />
           </Suspense>
         ) : null}

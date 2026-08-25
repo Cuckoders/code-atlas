@@ -20,11 +20,11 @@ import {
   validateArchitectureBlueprint,
   type ArchitectureBlueprintDraft,
 } from '../shared/blueprint.js';
-import type { BlueprintCodegenRequest } from '../shared/blueprint-codegen.js';
+import type { BlueprintCodegenRequest, BlueprintScaffoldRequest } from '../shared/blueprint-codegen.js';
 import type { RequestProbeInput, RequestProbeResult } from '../shared/request-trace.js';
 import { AnalysisQueue } from './analysis-queue.js';
 import { AnalysisError, analyzeProject, type AnalyzeProjectOptions } from './analyzer.js';
-import { BlueprintCodegenError, generateBlueprintCode } from './blueprint-codegen.js';
+import { BlueprintCodegenError, createBlueprintScaffold, generateBlueprintCode } from './blueprint-codegen.js';
 import { executeRequestProbe, RequestProbeValidationError } from './request-probe.js';
 import {
   createDemoOtlpPayload,
@@ -367,6 +367,19 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     }
   });
 
+  app.post<{ Body: BlueprintScaffoldRequest }>('/api/blueprints/scaffold', {
+    bodyLimit: MAX_BLUEPRINT_JSON_SIZE,
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    schema: { body: blueprintScaffoldSchema },
+  }, async (request, reply) => {
+    try {
+      return createBlueprintScaffold(request.body);
+    } catch (error) {
+      if (error instanceof BlueprintCodegenError) return reply.status(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AnalysisError) {
       return reply.status(error.statusCode).send({ error: error.message });
@@ -567,6 +580,16 @@ const blueprintCodegenSchema = {
     projectPath: blueprintQuerySchema.properties.projectPath,
     blueprintName: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[^\\u0000\\r\\n]+$' },
     outputDirectory: { type: 'string', minLength: 1, maxLength: 512, pattern: '^[A-Za-z0-9._\\/\\\\-]+$' },
+    blueprint: blueprintSchema,
+  },
+} as const;
+
+const blueprintScaffoldSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['blueprintName', 'blueprint'],
+  properties: {
+    blueprintName: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[^\\u0000\\r\\n]+$' },
     blueprint: blueprintSchema,
   },
 } as const;

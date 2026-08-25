@@ -7,12 +7,13 @@ interface BlueprintLibraryProps {
   activeId: string | null;
   onClose: () => void;
   onOpen: (document: BlueprintDocument) => void;
-  onNew: (name: string) => void;
+  onNew?: (name: string) => void;
+  openLabel?: string;
 }
 
 const DATE_FORMAT = new Intl.DateTimeFormat('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
-export default function BlueprintLibrary({ projectPath, activeId, onClose, onOpen, onNew }: BlueprintLibraryProps) {
+export default function BlueprintLibrary({ projectPath, activeId, onClose, onOpen, onNew, openLabel = 'Открыть' }: BlueprintLibraryProps) {
   const [items, setItems] = useState<BlueprintDocumentSummary[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   const [newName, setNewName] = useState('Новый blueprint');
@@ -112,10 +113,12 @@ export default function BlueprintLibrary({ projectPath, activeId, onClose, onOpe
           <div><span>Локальная библиотека</span><h2>Мои blueprint</h2></div>
           <button type="button" aria-label="Закрыть библиотеку blueprint" onClick={onClose}>×</button>
         </header>
-        <div className="blueprint-library__new">
-          <label><span>Название новой схемы</span><input name="new-blueprint-name" maxLength={128} value={newName} onChange={(event) => setNewName(event.target.value)} /></label>
-          <button type="button" disabled={!newName.trim()} onClick={() => { onNew(newName.trim()); onClose(); }}>＋ Создать</button>
-        </div>
+        {onNew ? (
+          <div className="blueprint-library__new">
+            <label><span>Название новой схемы</span><input name="new-blueprint-name" maxLength={128} value={newName} onChange={(event) => setNewName(event.target.value)} /></label>
+            <button type="button" disabled={!newName.trim()} onClick={() => { onNew(newName.trim()); onClose(); }}>＋ Создать</button>
+          </div>
+        ) : <div className="blueprint-library__new blueprint-library__browse-note"><span>Выберите сохранённый Blueprint, чтобы открыть его как самостоятельную карту.</span></div>}
         {error ? <p className="blueprint-library__error" role="alert">{error}</p> : null}
         <div className="blueprint-library__list">
           {busyId === 'loading' ? <p>Загружаем blueprint…</p> : items.length ? items.map((item) => (
@@ -124,7 +127,7 @@ export default function BlueprintLibrary({ projectPath, activeId, onClose, onOpe
               <input aria-label={`Название blueprint ${item.name}`} maxLength={128} value={names[item.id] ?? item.name} onChange={(event) => setNames((current) => ({ ...current, [item.id]: event.target.value }))} />
               <small>{item.nodeCount} узлов · {item.edgeCount} связей</small>
               <div>
-                <button type="button" disabled={busyId === item.id} onClick={() => void open(item)}>Открыть</button>
+                <button type="button" disabled={busyId === item.id} onClick={() => void open(item)}>{openLabel}</button>
                 <button type="button" disabled={busyId === item.id || !names[item.id]?.trim() || names[item.id] === item.name} onClick={() => void rename(item)}>Переименовать</button>
                 <button type="button" disabled={busyId === item.id} onClick={() => void duplicate(item)}>Копия</button>
                 <button type="button" className="is-danger" disabled={busyId === item.id} onClick={() => void remove(item)}>Удалить</button>

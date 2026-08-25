@@ -50,7 +50,7 @@ export default function BlueprintCodegenPanel({ projectPath, blueprintName, docu
       <div className="blueprint-codegen-summary"><strong>{enabledCount}</strong><span>компонентов подготовлено к генерации</span></div>
       <button type="button" className="blueprint-tool-panel__primary" disabled={generating || !outputDirectory.trim() || enabledCount === 0} onClick={() => void generate()}>{generating ? 'Генерируем…' : '⌘ Сгенерировать шаблоны'}</button>
       {error ? <p className="blueprint-tool-panel__error" role="alert">{error}</p> : null}
-      {result ? <section className="blueprint-codegen-result" aria-live="polite"><strong>Готово</strong><span>{result.outputDirectory}</span><div><i>＋ {result.created.length} создано</i><i>↷ {result.skipped.length} пропущено</i></div>{result.created.length ? <ul>{result.created.map((file) => <li key={file}>{file}</li>)}</ul> : null}</section> : null}
+      {result ? <section className="blueprint-codegen-result" aria-live="polite"><strong>Готово</strong><span>{result.outputDirectory}</span><div><i>＋ {result.created.length} создано</i><i>↻ {result.updated.length} обновлено</i><i>↷ {result.skipped.length} пропущено</i></div>{result.created.length ? <ul>{result.created.map((file) => <li key={file}>{file}</li>)}</ul> : null}</section> : null}
     </aside>
   );
 }
