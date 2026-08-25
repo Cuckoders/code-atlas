@@ -61,10 +61,12 @@ export function DiagnosticsMenu({ diagnostics, onSelect }: DiagnosticsMenuProps)
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls="diagnostics-popover"
+        aria-label={`Диагностика проекта: ${diagnostics.length}`}
+        title="Диагностика"
         onClick={() => setOpen((value) => !value)}
       >
         <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12"><path d="M6 1 11.3 10H.7L6 1Zm-.65 3v3.2h1.3V4h-1.3Zm0 4.2v1.3h1.3V8.2h-1.3Z" /></svg>
-        Диагностика
+        <b>Диагностика</b>
         <i>{diagnostics.length}</i>
       </button>
 

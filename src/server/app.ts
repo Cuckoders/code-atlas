@@ -24,7 +24,12 @@ import type { BlueprintCodegenRequest, BlueprintScaffoldRequest } from '../share
 import type { RequestProbeInput, RequestProbeResult } from '../shared/request-trace.js';
 import { AnalysisQueue } from './analysis-queue.js';
 import { AnalysisError, analyzeProject, type AnalyzeProjectOptions } from './analyzer.js';
-import { BlueprintCodegenError, createBlueprintScaffold, generateBlueprintCode } from './blueprint-codegen.js';
+import {
+  BlueprintCodegenError,
+  createBlueprintScaffold,
+  generateBlueprintCode,
+  inspectBlueprintProject,
+} from './blueprint-codegen.js';
 import { executeRequestProbe, RequestProbeValidationError } from './request-probe.js';
 import {
   createDemoOtlpPayload,
@@ -380,6 +385,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     }
   });
 
+  app.post<{ Body: { projectPath: string } }>('/api/blueprints/inspect-project', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    schema: { body: blueprintProjectInspectionSchema },
+  }, async (request, reply) => {
+    try {
+      return await inspectBlueprintProject(request.body.projectPath);
+    } catch (error) {
+      if (error instanceof BlueprintCodegenError) return reply.status(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AnalysisError) {
       return reply.status(error.statusCode).send({ error: error.message });
@@ -592,4 +609,11 @@ const blueprintScaffoldSchema = {
     blueprintName: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[^\\u0000\\r\\n]+$' },
     blueprint: blueprintSchema,
   },
+} as const;
+
+const blueprintProjectInspectionSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['projectPath'],
+  properties: { projectPath: blueprintQuerySchema.properties.projectPath },
 } as const;

@@ -58,10 +58,12 @@ export function MapFilters({ visibleKinds, onChange }: MapFiltersProps) {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls="map-filter-popover"
+        aria-label={`Фильтры карты: ${activeCount} из ${FILTERS.length}`}
+        title="Фильтры карты"
         onClick={() => setOpen((value) => !value)}
       >
         <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12"><path d="M1 2h10L7.1 6.4v3.1L4.9 11V6.4L1 2Z" /></svg>
-        Фильтры
+        <b>Фильтры</b>
         <i>{activeCount}/{FILTERS.length}</i>
       </button>
 

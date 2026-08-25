@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import {
   applyNodeChanges,
   Background,
@@ -17,9 +17,11 @@ import type {
   BlueprintEdgeKind,
   BlueprintNode,
 } from '../../shared/blueprint';
+import type { BlueprintSimulationResult } from '../../shared/blueprint-simulation';
 import { BlueprintGraphNode, type BlueprintGraphNodeData } from './BlueprintGraphNode';
 
 const nodeTypes = { blueprint: BlueprintGraphNode };
+const BlueprintSimulationPanel = lazy(() => import('./BlueprintSimulationPanel'));
 
 const EDGE_LABELS: Record<BlueprintEdgeKind, string> = {
   http: 'HTTP',
@@ -47,21 +49,37 @@ interface BlueprintMapViewProps {
 }
 
 export default function BlueprintMapView({ name, document, onEdit }: BlueprintMapViewProps) {
-  const sourceNodes = useMemo(() => document.nodes.map(toFlowNode), [document.nodes]);
+  const [simulationOpen, setSimulationOpen] = useState(false);
+  const [simulationResult, setSimulationResult] = useState<BlueprintSimulationResult | null>(null);
+  const [simulationStep, setSimulationStep] = useState(-1);
+  const activeSimulationStep = simulationResult?.steps[simulationStep] ?? null;
+  const visitedNodeIds = useMemo(
+    () => new Set(simulationResult?.steps.slice(0, Math.max(0, simulationStep + 1)).map((step) => step.nodeId) ?? []),
+    [simulationResult, simulationStep],
+  );
+  const sourceNodes = useMemo(() => document.nodes.map((node) => toFlowNode(
+    node,
+    activeSimulationStep?.nodeId === node.id
+      ? activeSimulationStep.status === 'failed' ? 'failed' : 'active'
+      : visitedNodeIds.has(node.id) ? 'visited' : undefined,
+  )), [activeSimulationStep, document.nodes, visitedNodeIds]);
   const [nodes, setNodes] = useState(sourceNodes);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedNode = document.nodes.find((node) => node.id === selectedId) ?? null;
-  const edges = useMemo<Edge[]>(() => document.edges.map((edge) => ({
+  const edges = useMemo<Edge[]>(() => document.edges.map((edge) => {
+    const isActive = activeSimulationStep?.viaEdgeId === edge.id;
+    return {
     id: edge.id,
     source: edge.source,
     target: edge.target,
     label: edge.label ?? EDGE_LABELS[edge.kind],
     type: 'smoothstep',
     markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor(edge.kind) },
-    style: { stroke: edgeColor(edge.kind), strokeWidth: 1.7 },
+    style: { stroke: isActive ? '#b8ffe9' : edgeColor(edge.kind), strokeWidth: isActive ? 3 : 1.7 },
     labelStyle: { fill: '#758596', fontFamily: 'DM Mono', fontSize: 8 },
     labelBgStyle: { fill: '#0b0f15', fillOpacity: 0.92 },
-  })), [document.edges]);
+    };
+  }), [activeSimulationStep?.viaEdgeId, document.edges]);
 
   useEffect(() => {
     setNodes(sourceNodes);
@@ -79,7 +97,7 @@ export default function BlueprintMapView({ name, document, onEdit }: BlueprintMa
         edges={edges}
         nodeTypes={nodeTypes}
         onNodesChange={handleNodesChange}
-        onNodeClick={(_event, node) => setSelectedId(node.id)}
+        onNodeClick={(_event, node) => { setSelectedId(node.id); setSimulationOpen(false); }}
         onPaneClick={() => setSelectedId(null)}
         nodesConnectable={false}
         elementsSelectable
@@ -117,7 +135,21 @@ export default function BlueprintMapView({ name, document, onEdit }: BlueprintMa
         <span>Карта Blueprint</span>
         <strong>{name}</strong>
         <small>{document.nodes.length} узлов · {document.edges.length} связей</small>
+        <button type="button" onClick={() => { setSelectedId(null); setSimulationOpen(true); }}>▶ Запустить логику</button>
       </div>
+
+      {simulationOpen ? (
+        <Suspense fallback={null}>
+          <BlueprintSimulationPanel
+            document={document}
+            result={simulationResult}
+            activeStep={simulationStep}
+            onResult={(result) => { setSimulationResult(result); setSimulationStep(0); }}
+            onSelectStep={setSimulationStep}
+            onClose={() => { setSimulationOpen(false); setSimulationStep(-1); }}
+          />
+        </Suspense>
+      ) : null}
 
       {selectedNode ? (
         <aside className="blueprint-map-details">
@@ -141,7 +173,7 @@ export default function BlueprintMapView({ name, document, onEdit }: BlueprintMa
   );
 }
 
-function toFlowNode(node: BlueprintNode): Node<BlueprintGraphNodeData> {
+function toFlowNode(node: BlueprintNode, simulationState?: BlueprintGraphNodeData['simulationState']): Node<BlueprintGraphNodeData> {
   return {
     id: node.id,
     type: 'blueprint',
@@ -153,6 +185,7 @@ function toFlowNode(node: BlueprintNode): Node<BlueprintGraphNodeData> {
       subtitle: node.technology ?? node.language ?? STATUS_LABELS[node.status],
       drift: node.actualNodeId || node.status === 'implemented' ? 'matched' : 'planned-only',
       readOnly: true,
+      ...(simulationState ? { simulationState } : {}),
     },
   };
 }

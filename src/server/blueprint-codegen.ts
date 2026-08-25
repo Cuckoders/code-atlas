@@ -1,14 +1,15 @@
-import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
   BlueprintCodegenRequest,
   BlueprintCodegenResult,
   BlueprintScaffold,
   BlueprintScaffoldRequest,
+  BlueprintProjectInspection,
 } from '../shared/blueprint-codegen.js';
 import type { BlueprintCodeTemplate, BlueprintEdge, BlueprintNode } from '../shared/blueprint.js';
 import { validateArchitectureBlueprint } from '../shared/blueprint.js';
-import { serializeBlueprintFile } from '../shared/blueprint-file.js';
+import { MAX_BLUEPRINT_FILE_SIZE, parseBlueprintFile, serializeBlueprintFile } from '../shared/blueprint-file.js';
 
 const SAFE_DIRECTORY_SEGMENT = /^[A-Za-z0-9._-]{1,80}$/;
 
@@ -98,6 +99,47 @@ export function createBlueprintScaffold(request: BlueprintScaffoldRequest): Blue
       },
     ],
   };
+}
+
+export async function inspectBlueprintProject(projectPath: string): Promise<BlueprintProjectInspection> {
+  let projectRoot: string;
+  try {
+    projectRoot = await realpath(projectPath);
+  } catch {
+    return { found: false };
+  }
+  const direct = await readBlueprintManifest(projectRoot);
+  if (direct) return direct;
+  const nested: BlueprintProjectInspection[] = [];
+  const entries = await readdir(projectRoot, { withFileTypes: true });
+  for (const entry of entries.slice(0, 200)) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    const candidate = await readBlueprintManifest(path.join(projectRoot, entry.name));
+    if (candidate) nested.push(candidate);
+    if (nested.length > 1) {
+      throw new BlueprintCodegenError('В папке найдено несколько Blueprint-проектов. Выберите конкретную вложенную папку.');
+    }
+  }
+  return nested[0] ?? { found: false };
+}
+
+async function readBlueprintManifest(projectRoot: string): Promise<BlueprintProjectInspection | null> {
+  const manifestPath = path.join(projectRoot, 'code-atlas.blueprint.json');
+  let stats;
+  try {
+    stats = await lstat(manifestPath);
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new BlueprintCodegenError('Манифест Blueprint содержит ссылку или не является файлом.');
+  }
+  if (stats.size > MAX_BLUEPRINT_FILE_SIZE) {
+    throw new BlueprintCodegenError('Манифест Blueprint слишком большой.');
+  }
+  const opened = parseBlueprintFile(await readFile(manifestPath, 'utf8'), path.basename(projectRoot));
+  return { found: true, name: opened.name, blueprint: opened.blueprint };
 }
 
 async function createContainedDirectory(projectRoot: string, segments: string[]): Promise<string> {

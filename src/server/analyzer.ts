@@ -33,7 +33,7 @@ const MAX_MEMBER_SOURCE_LINES = 200;
 
 const IGNORED_DIRECTORIES = new Set([
   '.git', '.idea', '.next', '.nuxt', '.turbo', '.venv', '.vscode',
-  'build', 'coverage', 'dist', 'dist-server', 'node_modules', 'target', 'vendor',
+  'build', 'code-atlas-generated', 'coverage', 'dist', 'dist-server', 'node_modules', 'target', 'vendor',
 ]);
 
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {

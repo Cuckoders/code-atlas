@@ -35,3 +35,7 @@ export interface SavedBlueprintProject {
   written: string[];
   skipped: string[];
 }
+
+export type BlueprintProjectInspection =
+  | { found: false }
+  | { found: true; name: string; blueprint: ArchitectureBlueprintDraft };

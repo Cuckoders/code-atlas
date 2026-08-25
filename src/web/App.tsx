@@ -28,6 +28,7 @@ import type {
   StoredAnalysisSnapshot,
 } from '../shared/graph';
 import type { ArchitectureBlueprintDraft, BlueprintDocument } from '../shared/blueprint';
+import type { BlueprintProjectInspection } from '../shared/blueprint-codegen';
 import { parseBlueprintFile } from '../shared/blueprint-file';
 import type { RequestTrace } from '../shared/request-trace';
 import type { SourceEditor } from '../shared/source-editor';
@@ -386,24 +387,6 @@ export function App() {
     return () => window.cancelAnimationFrame(frame);
   }, [graphLayoutMode, requestPanelOpen, requestTrace, runtimePanelOpen, viewMode]);
 
-  const handleAnalyze = (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!projectPath.trim()) return;
-    void runBackgroundAnalysis(projectPath.trim(), undefined, analysisPriority);
-  };
-
-  const handleChooseProjectDirectory = useCallback(async () => {
-    setError(null);
-    try {
-      const selectedPath = await chooseProjectDirectory();
-      if (selectedPath) setProjectPath(selectedPath);
-    } catch (pickerError) {
-      setError(pickerError instanceof Error
-        ? `Не удалось открыть системный выбор папки: ${pickerError.message}`
-        : 'Не удалось открыть системный выбор папки.');
-    }
-  }, []);
-
   const handleNodeClick = useCallback<NodeMouseHandler>((_event, flowNode) => {
     const atlas = (flowNode.data as Partial<AtlasGraphNodeData>).atlas;
     if (!atlas) return;
@@ -455,6 +438,47 @@ export function App() {
     setSelectedNode(null);
     setMapSelectedIds(new Set());
   }, []);
+
+  const openProjectPath = useCallback(async (targetPath: string) => {
+    setError(null);
+    setProjectPath(targetPath);
+    try {
+      const response = await apiFetch('/api/blueprints/inspect-project', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectPath: targetPath }),
+      });
+      const payload = await response.json() as BlueprintProjectInspection | { error: string };
+      if (!response.ok || 'error' in payload) {
+        throw new Error('error' in payload ? payload.error : 'Не удалось проверить папку проекта.');
+      }
+      if (payload.found) {
+        openBlueprintOnMap(payload.blueprint, payload.name, null);
+        return;
+      }
+      await runBackgroundAnalysis(targetPath, undefined, analysisPriority);
+    } catch (openError) {
+      setError(openError instanceof Error ? openError.message : 'Не удалось открыть проект.');
+    }
+  }, [analysisPriority, openBlueprintOnMap, runBackgroundAnalysis]);
+
+  const handleAnalyze = useCallback((event: React.FormEvent) => {
+    event.preventDefault();
+    const targetPath = projectPath.trim();
+    if (targetPath) void openProjectPath(targetPath);
+  }, [openProjectPath, projectPath]);
+
+  const handleChooseProjectDirectory = useCallback(async () => {
+    setError(null);
+    try {
+      const selectedPath = await chooseProjectDirectory();
+      if (selectedPath) await openProjectPath(selectedPath);
+    } catch (pickerError) {
+      setError(pickerError instanceof Error
+        ? `Не удалось открыть системный выбор папки: ${pickerError.message}`
+        : 'Не удалось открыть системный выбор папки.');
+    }
+  }, [openProjectPath]);
 
   const openBlueprintFromProject = useCallback(async () => {
     setError(null);
@@ -666,21 +690,26 @@ export function App() {
                 onClick={() => changeWorkspaceMode('constructor')}
               >Конструктор</button>
             </div>
-            <button
-              type="button"
-              className={`snapshot-library-trigger ${snapshotLibraryOpen ? 'is-active' : ''}`}
-              onMouseEnter={() => void import('./components/SnapshotLibrary')}
-              onFocus={() => void import('./components/SnapshotLibrary')}
-              onClick={() => setSnapshotLibraryOpen(true)}
-            ><span aria-hidden="true">◷</span><b>Снимки</b><i>{snapshots.length}</i></button>
-            <button
-              type="button"
-              className={`blueprint-library-trigger ${blueprintLibraryOpen ? 'is-active' : ''}`}
-              onMouseEnter={() => void import('./components/BlueprintLibrary')}
-              onFocus={() => void import('./components/BlueprintLibrary')}
-              onClick={() => setBlueprintLibraryOpen(true)}
-            ><span aria-hidden="true">▤</span><b>Blueprints</b></button>
-            <button type="button" className="blueprint-file-open" title="Открыть папку Blueprint с кодом" onClick={() => void openBlueprintFromProject()}><span aria-hidden="true">↥</span><b>Открыть папку</b></button>
+            <details className="toolbar-resources-menu">
+              <summary aria-label={`Проекты и снимки, сохранено снимков: ${snapshots.length}`} title="Снимки, Blueprint и папки"><span aria-hidden="true">▦</span><b>Проекты</b><i>{snapshots.length}</i></summary>
+              <div>
+                <button
+                  type="button"
+                  className={snapshotLibraryOpen ? 'is-active' : ''}
+                  onMouseEnter={() => void import('./components/SnapshotLibrary')}
+                  onFocus={() => void import('./components/SnapshotLibrary')}
+                  onClick={(event) => { setSnapshotLibraryOpen(true); event.currentTarget.closest('details')?.removeAttribute('open'); }}
+                ><span aria-hidden="true">◷</span><b>Снимки анализа</b><i>{snapshots.length}</i></button>
+                <button
+                  type="button"
+                  className={blueprintLibraryOpen ? 'is-active' : ''}
+                  onMouseEnter={() => void import('./components/BlueprintLibrary')}
+                  onFocus={() => void import('./components/BlueprintLibrary')}
+                  onClick={(event) => { setBlueprintLibraryOpen(true); event.currentTarget.closest('details')?.removeAttribute('open'); }}
+                ><span aria-hidden="true">▤</span><b>Мои Blueprint</b></button>
+                <button type="button" onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void openBlueprintFromProject(); }}><span aria-hidden="true">↥</span><b>Открыть Blueprint-папку</b></button>
+              </div>
+            </details>
             {workspaceMode === 'map' && mapBlueprint ? (
               <div className="map-source-toggle" role="group" aria-label="Источник карты">
                 <button type="button" className={mapSource === 'analysis' ? 'is-active' : ''} onClick={openActualMap}>Код</button>
@@ -711,16 +740,20 @@ export function App() {
                   type="button"
                   className={`request-trace-toggle ${requestPanelOpen ? 'is-active' : ''}`}
                   aria-pressed={requestPanelOpen}
+                  aria-label="Отправить запрос и проследить путь"
+                  title="Запрос"
                   onClick={() => {
                     setSelectedNode(null);
                     setMapSelectedIds(new Set());
                     setRightToolPanel((current) => current === 'request' ? null : 'request');
                   }}
-                ><span>↗</span> Запрос</button>
+                ><span>↗</span><b>Запрос</b></button>
                 <button
                   type="button"
                   className={`request-trace-toggle runtime-trace-toggle ${runtimePanelOpen ? 'is-active' : ''}`}
                   aria-pressed={runtimePanelOpen}
+                  aria-label="Открыть runtime-трейсы"
+                  title="Трейсы"
                   onMouseEnter={() => void import('./components/RuntimeTracePanel')}
                   onFocus={() => void import('./components/RuntimeTracePanel')}
                   onClick={() => {
@@ -728,7 +761,7 @@ export function App() {
                     setMapSelectedIds(new Set());
                     setRightToolPanel((current) => current === 'runtime' ? null : 'runtime');
                   }}
-                ><span>⌁</span> Трейсы</button>
+                ><span>⌁</span><b>Трейсы</b></button>
                 <label className="search-field">
                   <span>⌕</span>
                   <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Найти модуль, класс, путь…" />

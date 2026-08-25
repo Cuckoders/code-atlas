@@ -2,7 +2,12 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { BlueprintCodegenError, createBlueprintScaffold, generateBlueprintCode } from '../src/server/blueprint-codegen.js';
+import {
+  BlueprintCodegenError,
+  createBlueprintScaffold,
+  generateBlueprintCode,
+  inspectBlueprintProject,
+} from '../src/server/blueprint-codegen.js';
 import { parseBlueprintFile } from '../src/shared/blueprint-file.js';
 import type { ArchitectureBlueprintDraft } from '../src/shared/blueprint.js';
 
@@ -92,6 +97,31 @@ describe('blueprint code generation', () => {
     const manifest = scaffold.files.find((file) => file.path === 'code-atlas.blueprint.json');
     expect(manifest?.overwrite).toBe(true);
     expect(parseBlueprintFile(manifest?.contents ?? '').blueprint).toEqual(blueprint);
+  });
+
+  it('recognizes an exported folder as a Blueprint project', async () => {
+    const destinationPath = await fs.mkdtemp(path.join(os.tmpdir(), 'code-atlas-blueprint-project-'));
+    const projectPath = path.join(destinationPath, 'detected-blueprint');
+    try {
+      await fs.mkdir(projectPath);
+      const blueprint = createBlueprint(projectPath);
+      const scaffold = createBlueprintScaffold({ blueprintName: 'Detected Blueprint', blueprint });
+      const manifest = scaffold.files.find((file) => file.path === 'code-atlas.blueprint.json');
+      await fs.writeFile(path.join(projectPath, 'code-atlas.blueprint.json'), manifest?.contents ?? '');
+
+      await expect(inspectBlueprintProject(projectPath)).resolves.toEqual({
+        found: true,
+        name: 'Detected Blueprint',
+        blueprint,
+      });
+      await expect(inspectBlueprintProject(destinationPath)).resolves.toEqual({
+        found: true,
+        name: 'Detected Blueprint',
+        blueprint,
+      });
+    } finally {
+      await fs.rm(destinationPath, { recursive: true, force: true });
+    }
   });
 
   it('rejects paths outside the project and symlinked output folders', async () => {
