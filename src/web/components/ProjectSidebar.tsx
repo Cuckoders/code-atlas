@@ -1,11 +1,9 @@
 import { useState, type FormEvent } from 'react';
-import type { AnalysisSnapshotSummary, NodeKind, ProjectDiagnostic, ProjectSummary } from '../../shared/graph';
+import type { AnalysisSnapshotSummary, ProjectDiagnostic, ProjectSummary } from '../../shared/graph';
 
 interface ProjectSidebarProps {
   summary: ProjectSummary;
   diagnostics: ProjectDiagnostic[];
-  visibleKinds: Set<NodeKind>;
-  onToggleKind: (kind: NodeKind) => void;
   onSelectDiagnostic: (diagnostic: ProjectDiagnostic) => void;
   onCompare: (reference: string) => void;
   snapshots: AnalysisSnapshotSummary[];
@@ -13,16 +11,6 @@ interface ProjectSidebarProps {
   onOpenSnapshot: (snapshotId: string) => void;
   loading: boolean;
 }
-
-const FILTERS: Array<{ kind: NodeKind; label: string }> = [
-  { kind: 'service', label: 'Сервисы' },
-  { kind: 'database', label: 'Базы данных' },
-  { kind: 'module', label: 'Модули' },
-  { kind: 'controller', label: 'Контроллеры' },
-  { kind: 'class', label: 'Классы' },
-  { kind: 'interface', label: 'Интерфейсы' },
-  { kind: 'function', label: 'Функции' },
-];
 
 const SNAPSHOT_DATE = new Intl.DateTimeFormat('ru', {
   day: '2-digit',
@@ -34,8 +22,6 @@ const SNAPSHOT_DATE = new Intl.DateTimeFormat('ru', {
 export function ProjectSidebar({
   summary,
   diagnostics,
-  visibleKinds,
-  onToggleKind,
   onSelectDiagnostic,
   onCompare,
   snapshots,
@@ -162,21 +148,6 @@ export function ProjectSidebar({
             {diagnostics.length > 6 ? <p className="diagnostic-more">Ещё {diagnostics.length - 6}</p> : null}
           </div>
         ) : <p className="diagnostic-empty">Явных архитектурных рисков не найдено</p>}
-      </section>
-
-      <section className="sidebar-section filters">
-        <h2>Слои карты</h2>
-        {FILTERS.map((filter) => (
-          <label key={filter.kind}>
-            <input
-              type="checkbox"
-              checked={visibleKinds.has(filter.kind)}
-              onChange={() => onToggleKind(filter.kind)}
-            />
-            <span className={`kind-dot kind-dot--${filter.kind}`} />
-            {filter.label}
-          </label>
-        ))}
       </section>
 
       <footer>

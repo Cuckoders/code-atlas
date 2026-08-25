@@ -31,6 +31,7 @@ import type { RequestTrace } from '../shared/request-trace';
 import { AtlasGraphNode, type AtlasGraphNodeData } from './components/AtlasGraphNode';
 import { GraphZoneNode, type GraphZoneNodeData } from './components/GraphZoneNode';
 import { Inspector } from './components/Inspector';
+import { MapFilters } from './components/MapFilters';
 import { ProjectSidebar } from './components/ProjectSidebar';
 import { RequestTraceEdge, type RequestTraceEdgeData } from './components/RequestTraceEdge';
 import { RequestTracePanel } from './components/RequestTracePanel';
@@ -367,16 +368,6 @@ export function App() {
     setSelectedNode(null);
   }, [diveableIds]);
 
-  const toggleKind = useCallback((kind: NodeKind) => {
-    if (kind === 'project') return;
-    setVisibleKinds((current) => {
-      const next = new Set(current);
-      if (next.has(kind)) next.delete(kind);
-      else next.add(kind);
-      return next;
-    });
-  }, []);
-
   const changeViewMode = useCallback((mode: '2d' | '3d') => {
     startTransition(() => setViewMode(mode));
   }, []);
@@ -513,8 +504,6 @@ export function App() {
       <ProjectSidebar
         summary={analysis.summary}
         diagnostics={analysis.diagnostics}
-        visibleKinds={visibleKinds}
-        onToggleKind={toggleKind}
         onSelectDiagnostic={selectDiagnostic}
         onCompare={compareWithGitReference}
         snapshots={snapshots}
@@ -584,6 +573,7 @@ export function App() {
             ) : null}
             {workspaceMode === 'map' ? (
               <>
+                <MapFilters visibleKinds={visibleKinds} onChange={setVisibleKinds} />
                 <button
                   type="button"
                   className={`request-trace-toggle ${requestPanelOpen ? 'is-active' : ''}`}
