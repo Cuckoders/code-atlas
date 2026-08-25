@@ -26,6 +26,7 @@ import type {
 import { AtlasGraphNode, type AtlasGraphNodeData } from './components/AtlasGraphNode';
 import { Inspector } from './components/Inspector';
 import { ProjectSidebar } from './components/ProjectSidebar';
+import { chooseProjectDirectory, hasNativeDirectoryPicker } from './desktop';
 
 const nodeTypes = { atlas: AtlasGraphNode };
 const Graph3D = lazy(() => import('./components/Graph3D'));
@@ -71,6 +72,7 @@ export function App() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const activeRequest = useRef<AbortController | null>(null);
+  const nativeDirectoryPicker = useMemo(() => hasNativeDirectoryPicker(), []);
 
   const applyAnalysis = useCallback((nextAnalysis: ProjectAnalysis, snapshotId: string | null = null) => {
     setAnalysis(nextAnalysis);
@@ -242,6 +244,18 @@ export function App() {
     void runBackgroundAnalysis(projectPath.trim(), undefined, analysisPriority);
   };
 
+  const handleChooseProjectDirectory = useCallback(async () => {
+    setError(null);
+    try {
+      const selectedPath = await chooseProjectDirectory();
+      if (selectedPath) setProjectPath(selectedPath);
+    } catch (pickerError) {
+      setError(pickerError instanceof Error
+        ? `Не удалось открыть системный выбор папки: ${pickerError.message}`
+        : 'Не удалось открыть системный выбор папки.');
+    }
+  }, []);
+
   const handleNodeClick = useCallback<NodeMouseHandler>((_event, flowNode) => {
     setSelectedNode((flowNode.data as AtlasGraphNodeData).atlas);
   }, []);
@@ -320,6 +334,16 @@ export function App() {
             placeholder="Абсолютный путь к проекту"
             aria-label="Путь к проекту"
           />
+          {nativeDirectoryPicker ? (
+            <button
+              className="path-form__picker"
+              type="button"
+              disabled={loading}
+              aria-label="Выбрать папку проекта"
+              title="Выбрать папку проекта"
+              onClick={() => void handleChooseProjectDirectory()}
+            >Папка</button>
+          ) : null}
           {jobStatus === 'queued' || jobStatus === 'running' ? (
             <button
               className="path-form__cancel"

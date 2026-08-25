@@ -9,3 +9,5 @@ dist-server/
 .playwright-cli/
 output/playwright/
 .code-atlas/
+src-tauri/target/
+src-tauri/gen/
