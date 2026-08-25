@@ -20,9 +20,10 @@ const KIND_ICON: Record<NodeKind, string> = {
 export function AtlasGraphNode({ data, selected }: NodeProps) {
   const nodeData = data as AtlasGraphNodeData;
   const { atlas, dimmed } = nodeData;
-  const gitChange = typeof atlas.metadata?.gitChange === 'string' ? atlas.metadata.gitChange : null;
+  const diffStatus = typeof atlas.metadata?.diffStatus === 'string' ? atlas.metadata.diffStatus : null;
+  const changeLabel = diffStatus === 'added' ? 'A' : diffStatus === 'modified' ? 'M' : diffStatus === 'removed' ? 'R' : null;
   return (
-    <div className={`atlas-node atlas-node--${atlas.kind} ${selected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''} ${gitChange ? 'has-git-change' : ''}`}>
+    <div className={`atlas-node atlas-node--${atlas.kind} ${selected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''} ${diffStatus ? `atlas-node--diff-${diffStatus}` : ''}`}>
       <Handle type="target" position={Position.Left} className="atlas-handle" />
       <div className="atlas-node__icon" aria-hidden="true">{KIND_ICON[atlas.kind]}</div>
       <div className="atlas-node__body">
@@ -31,7 +32,7 @@ export function AtlasGraphNode({ data, selected }: NodeProps) {
         {atlas.subtitle ? <small>{atlas.subtitle}</small> : null}
       </div>
       {atlas.members?.length ? <span className="atlas-node__count">{atlas.members.length}</span> : null}
-      {gitChange ? <span className="atlas-node__change">Δ {gitChange.slice(0, 1).toUpperCase()}</span> : null}
+      {changeLabel ? <span className="atlas-node__change">Δ {changeLabel}</span> : null}
       <Handle type="source" position={Position.Right} className="atlas-handle" />
     </div>
   );

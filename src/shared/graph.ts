@@ -26,6 +26,15 @@ export interface GitComparison {
   added: number;
   modified: number;
   deleted: number;
+  architecture?: ArchitectureDiffSummary;
+}
+
+export interface ArchitectureDiffSummary {
+  nodesAdded: number;
+  nodesModified: number;
+  nodesRemoved: number;
+  edgesAdded: number;
+  edgesRemoved: number;
 }
 
 export interface GitSummary {
@@ -61,6 +70,7 @@ export interface AtlasEdge {
   target: string;
   kind: EdgeKind;
   label?: string;
+  change?: 'added' | 'removed';
 }
 
 export interface ProjectDiagnostic {

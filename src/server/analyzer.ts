@@ -4,13 +4,20 @@ import ts from 'typescript';
 import type {
   AtlasEdge,
   AtlasNode,
+  ArchitectureDiffSummary,
   LanguageStat,
   NodeKind,
   ProjectAnalysis,
   ProjectDiagnostic,
   SymbolMember,
 } from '../shared/graph.js';
-import { analyzeGitHistory, GitReferenceError, type GitFileHistory } from './git-analyzer.js';
+import {
+  analyzeGitHistory,
+  GitReferenceError,
+  readGitSnapshot,
+  type GitAnalysis,
+  type GitFileHistory,
+} from './git-analyzer.js';
 import { parseWithTreeSitter, type ParsedSource } from './tree-sitter-parser.js';
 
 const MAX_FILES = 1_500;
@@ -49,6 +56,7 @@ interface FileEntry {
   absolutePath: string;
   relativePath: string;
   size: number;
+  content?: string;
 }
 
 interface ServiceInfo {
@@ -116,6 +124,54 @@ export async function analyzeProject(inputPath: string, options: AnalyzeProjectO
     if (error instanceof GitReferenceError) throw new AnalysisError(error.message);
     throw error;
   }
+  const analysis = await buildProjectAnalysis(
+    rootPath,
+    files,
+    skipped,
+    truncated,
+    services,
+    gitAnalysis,
+    startedAt,
+  );
+  if (!options.compareRef) return analysis;
+
+  const snapshot = await readGitSnapshot(rootPath, options.compareRef, isSnapshotRelevant);
+  const snapshotFiles: FileEntry[] = snapshot.files.map((file) => ({
+    absolutePath: path.join(rootPath, file.relativePath),
+    relativePath: file.relativePath,
+    size: file.size,
+    content: file.content,
+  }));
+  const baseServices = await discoverServices(
+    rootPath,
+    snapshotFiles.filter((file) => MANIFEST_NAMES.has(path.basename(file.relativePath))),
+  );
+  const baseAnalysis = await buildProjectAnalysis(
+    rootPath,
+    snapshotFiles,
+    snapshot.skipped,
+    snapshot.truncated,
+    baseServices,
+    emptyGitAnalysis(),
+    performance.now(),
+  );
+  if (snapshot.truncated) {
+    analysis.warnings.push('Исторический Git-снимок ограничен: архитектурный diff может быть частичным.');
+  }
+  const diff = applyArchitectureDiff(analysis, baseAnalysis);
+  diff.summary.durationMs = Math.round(performance.now() - startedAt);
+  return diff;
+}
+
+async function buildProjectAnalysis(
+  rootPath: string,
+  files: FileEntry[],
+  skipped: number,
+  truncated: boolean,
+  services: ServiceInfo[],
+  gitAnalysis: GitAnalysis,
+  startedAt: number,
+): Promise<ProjectAnalysis> {
   const projectName = path.basename(rootPath);
   const projectId = 'project:root';
   const nodes: AtlasNode[] = [{
@@ -137,7 +193,11 @@ export async function analyzeProject(inputPath: string, options: AnalyzeProjectO
       kind: 'service',
       path: service.directory || '.',
       subtitle: path.basename(service.manifest),
-      metadata: { manifest: service.manifest, technologies: service.technologies },
+      metadata: {
+        manifest: service.manifest,
+        technologies: service.technologies,
+        ...gitMetadata(gitAnalysis.files.get(service.manifest)),
+      },
     });
     edges.push(edge(projectId, service.id, 'contains'));
     detectDatabases(service.manifestText).forEach((database) => databases.add(database));
@@ -310,6 +370,128 @@ function gitMetadata(history: GitFileHistory | undefined): AtlasNode['metadata']
     ...(history.lastChangedAt ? { gitLastChanged: history.lastChangedAt } : {}),
     ...(history.change ? { gitChange: history.change } : {}),
   };
+}
+
+function emptyGitAnalysis(): GitAnalysis {
+  return {
+    summary: { available: false, commitsAnalyzed: 0, contributors: [] },
+    files: new Map(),
+  };
+}
+
+function isSnapshotRelevant(relativePath: string): boolean {
+  const baseName = path.posix.basename(relativePath);
+  return MANIFEST_NAMES.has(baseName)
+    || SOURCE_EXTENSIONS.has(path.posix.extname(relativePath).toLowerCase())
+    || /(^|\/)(docker-compose|compose)[^/]*\.ya?ml$/i.test(relativePath);
+}
+
+function applyArchitectureDiff(current: ProjectAnalysis, base: ProjectAnalysis): ProjectAnalysis {
+  const currentKeyById = new Map(current.nodes.map((node) => [node.id, stableNodeKey(node)]));
+  const baseKeyById = new Map(base.nodes.map((node) => [node.id, stableNodeKey(node)]));
+  const currentByKey = new Map(current.nodes.map((node) => [stableNodeKey(node), node]));
+  const baseByKey = new Map(base.nodes.map((node) => [stableNodeKey(node), node]));
+  const mergedNodes: AtlasNode[] = [];
+  const idByStableKey = new Map<string, string>();
+  let nodesAdded = 0;
+  let nodesModified = 0;
+  let nodesRemoved = 0;
+
+  for (const node of current.nodes) {
+    const key = stableNodeKey(node);
+    const baseNode = baseByKey.get(key);
+    const gitChange = node.metadata?.gitChange;
+    const status = !baseNode
+      ? 'added'
+      : gitChange === 'modified' || nodeFingerprint(node) !== nodeFingerprint(baseNode)
+        ? 'modified'
+        : undefined;
+    if (status === 'added' && node.kind !== 'project') nodesAdded += 1;
+    if (status === 'modified' && node.kind !== 'project') nodesModified += 1;
+    const merged = status
+      ? { ...node, metadata: { ...node.metadata, diffStatus: status } }
+      : node;
+    mergedNodes.push(merged);
+    idByStableKey.set(key, merged.id);
+  }
+
+  for (const node of base.nodes) {
+    const key = stableNodeKey(node);
+    if (currentByKey.has(key)) continue;
+    const removedId = `removed:${node.id}`;
+    mergedNodes.push({
+      ...node,
+      id: removedId,
+      subtitle: node.subtitle ? `${node.subtitle} · удалено` : 'Удалено в текущей версии',
+      metadata: { ...node.metadata, diffStatus: 'removed' },
+    });
+    idByStableKey.set(key, removedId);
+    if (node.kind !== 'project') nodesRemoved += 1;
+  }
+
+  const currentEdgeKeys = new Set(current.edges.map((item) => stableEdgeKey(item, currentKeyById)));
+  const baseEdgeKeys = new Set(base.edges.map((item) => stableEdgeKey(item, baseKeyById)));
+  let edgesAdded = 0;
+  let edgesRemoved = 0;
+  const mergedEdges = current.edges.map((item) => {
+    const isAdded = !baseEdgeKeys.has(stableEdgeKey(item, currentKeyById));
+    if (isAdded) edgesAdded += 1;
+    return isAdded ? { ...item, change: 'added' as const } : item;
+  });
+
+  for (const item of base.edges) {
+    const key = stableEdgeKey(item, baseKeyById);
+    if (currentEdgeKeys.has(key)) continue;
+    const sourceKey = baseKeyById.get(item.source);
+    const targetKey = baseKeyById.get(item.target);
+    const source = sourceKey ? idByStableKey.get(sourceKey) : undefined;
+    const target = targetKey ? idByStableKey.get(targetKey) : undefined;
+    if (!source || !target) continue;
+    mergedEdges.push({
+      ...item,
+      id: `removed:${item.id}`,
+      source,
+      target,
+      change: 'removed',
+    });
+    edgesRemoved += 1;
+  }
+
+  const architecture: ArchitectureDiffSummary = {
+    nodesAdded,
+    nodesModified,
+    nodesRemoved,
+    edgesAdded,
+    edgesRemoved,
+  };
+  if (current.summary.git.comparison) current.summary.git.comparison.architecture = architecture;
+  return { ...current, nodes: mergedNodes, edges: mergedEdges };
+}
+
+function stableNodeKey(node: AtlasNode): string {
+  if (node.kind === 'project') return 'project';
+  if (node.id.startsWith('symbol:')) return `symbol:${node.path ?? ''}:${node.kind}:${node.label}`;
+  if (node.kind === 'service') return `service:${node.path ?? node.label}`;
+  if (node.kind === 'database') return `database:${node.label.toLowerCase()}`;
+  return `module:${node.path ?? node.id}`;
+}
+
+function stableEdgeKey(edgeItem: AtlasEdge, nodeKeyById: Map<string, string>): string {
+  return `${edgeItem.kind}:${nodeKeyById.get(edgeItem.source) ?? edgeItem.source}->${nodeKeyById.get(edgeItem.target) ?? edgeItem.target}`;
+}
+
+function nodeFingerprint(node: AtlasNode): string {
+  return JSON.stringify({
+    label: node.label,
+    kind: node.kind,
+    path: node.path,
+    language: node.language,
+    members: node.members?.map((member) => ({
+      name: member.name,
+      kind: member.kind,
+      signature: member.signature,
+    })),
+  });
 }
 
 async function collectFiles(rootPath: string): Promise<{ files: FileEntry[]; skipped: number; truncated: boolean }> {
@@ -769,6 +951,7 @@ function isAnalyzableCode(extension: string): boolean {
 
 async function readText(file: FileEntry): Promise<string | null> {
   if (file.size > MAX_FILE_SIZE) return null;
+  if (file.content !== undefined) return file.content.includes('\0') ? null : file.content;
   const buffer = await fs.readFile(file.absolutePath).catch(() => null);
   if (!buffer || buffer.includes(0)) return null;
   return buffer.toString('utf8');

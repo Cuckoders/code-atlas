@@ -4,8 +4,11 @@ import type { GitComparison, GitSummary } from '../shared/graph.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_COMMITS = 300;
-const MAX_GIT_OUTPUT = 5 * 1024 * 1024;
+const MAX_GIT_OUTPUT = 16 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 5_000;
+const MAX_SNAPSHOT_FILES = 600;
+const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+const MAX_SNAPSHOT_FILE_SIZE = 512 * 1024;
 const COMMIT_PREFIX = '@@@';
 const FIELD_SEPARATOR = '\u001f';
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._/@-]{0,127}$/;
@@ -22,6 +25,18 @@ export interface GitFileHistory {
 export interface GitAnalysis {
   summary: GitSummary;
   files: Map<string, GitFileHistory>;
+}
+
+export interface GitSnapshotFile {
+  relativePath: string;
+  size: number;
+  content: string;
+}
+
+export interface GitSnapshot {
+  files: GitSnapshotFile[];
+  skipped: number;
+  truncated: boolean;
 }
 
 export class GitReferenceError extends Error {}
@@ -67,6 +82,79 @@ export async function analyzeGitHistory(rootPath: string, compareRef?: string): 
 
 export function isSafeGitReference(reference: string): boolean {
   return SAFE_REF.test(reference) && !reference.includes('..') && !reference.includes('@{');
+}
+
+export async function readGitSnapshot(
+  rootPath: string,
+  reference: string,
+  includePath: (relativePath: string) => boolean,
+): Promise<GitSnapshot> {
+  if (!isSafeGitReference(reference)) throw new GitReferenceError('Некорректное имя Git-ветки или тега.');
+  const prefix = (await runGit(rootPath, ['rev-parse', '--show-prefix'])).trim();
+  const treeOutput = await runGit(rootPath, ['ls-tree', '-r', '-l', '-z', reference, '--', '.']);
+  const candidates: Array<{ hash: string; relativePath: string; size: number }> = [];
+  let skipped = 0;
+  let totalBytes = 0;
+  let truncated = false;
+
+  for (const entry of treeOutput.split('\0')) {
+    if (!entry) continue;
+    const match = /^\d+\s+blob\s+([0-9a-f]+)\s+(\d+|-)\t(.+)$/.exec(entry);
+    if (!match) continue;
+    const repositoryPath = match[3];
+    const relativePath = prefix && repositoryPath.startsWith(prefix)
+      ? repositoryPath.slice(prefix.length)
+      : repositoryPath;
+    const size = match[2] === '-' ? MAX_SNAPSHOT_FILE_SIZE + 1 : Number(match[2]);
+    if (!isSafeSnapshotPath(relativePath) || !includePath(relativePath) || size > MAX_SNAPSHOT_FILE_SIZE) {
+      skipped += 1;
+      continue;
+    }
+    if (candidates.length >= MAX_SNAPSHOT_FILES || totalBytes + size > MAX_SNAPSHOT_BYTES) {
+      truncated = true;
+      skipped += 1;
+      continue;
+    }
+    candidates.push({ hash: match[1], relativePath, size });
+    totalBytes += size;
+  }
+
+  const files: GitSnapshotFile[] = [];
+  for (let offset = 0; offset < candidates.length; offset += 12) {
+    const chunk = candidates.slice(offset, offset + 12);
+    const contents = await Promise.all(chunk.map(async (candidate) => ({
+      candidate,
+      content: await readGitBlob(rootPath, candidate.hash),
+    })));
+    for (const item of contents) {
+      if (item.content === null) {
+        skipped += 1;
+        continue;
+      }
+      files.push({
+        relativePath: item.candidate.relativePath,
+        size: item.candidate.size,
+        content: item.content,
+      });
+    }
+  }
+  return { files, skipped, truncated };
+}
+
+function isSafeSnapshotPath(filePath: string): boolean {
+  return Boolean(filePath) && !filePath.startsWith('/') && !filePath.split('/').includes('..');
+}
+
+async function readGitBlob(rootPath: string, hash: string): Promise<string | null> {
+  const result = await execFileAsync('git', ['--no-pager', 'cat-file', 'blob', hash], {
+    cwd: rootPath,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_PAGER: 'cat' },
+    maxBuffer: MAX_SNAPSHOT_FILE_SIZE + 1,
+    timeout: GIT_TIMEOUT_MS,
+    windowsHide: true,
+  });
+  const buffer = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout);
+  return buffer.includes(0) ? null : buffer.toString('utf8');
 }
 
 async function readBranch(rootPath: string): Promise<string | undefined> {

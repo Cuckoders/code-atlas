@@ -84,7 +84,7 @@ export function ProjectSidebar({
               <input
                 value={compareRef}
                 onChange={(event) => setCompareRef(event.target.value)}
-                placeholder="ветка или тег"
+                placeholder="ветка, тег или hash"
                 aria-label="Git-ветка или тег для сравнения"
               />
               <button type="submit" disabled={loading || !compareRef.trim()}>Сравнить</button>
@@ -94,6 +94,15 @@ export function ProjectSidebar({
                 <strong>Δ {summary.git.comparison.baseRef}</strong>
                 <span>{summary.git.comparison.changedFiles} файлов</span>
                 <small>+{summary.git.comparison.added} · ~{summary.git.comparison.modified} · −{summary.git.comparison.deleted}</small>
+                {summary.git.comparison.architecture ? (
+                  <small className="architecture-diff-summary">
+                    Узлы +{summary.git.comparison.architecture.nodesAdded}
+                    {' · '}~{summary.git.comparison.architecture.nodesModified}
+                    {' · '}−{summary.git.comparison.architecture.nodesRemoved}
+                    <br />Связи +{summary.git.comparison.architecture.edgesAdded}
+                    {' · '}−{summary.git.comparison.architecture.edgesRemoved}
+                  </small>
+                ) : null}
               </div>
             ) : null}
           </>
