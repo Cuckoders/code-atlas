@@ -6,12 +6,14 @@ import ForceGraph3D, {
 import SpriteText from 'three-spritetext';
 import * as THREE from 'three';
 import type { AtlasEdge, AtlasNode, EdgeKind, NodeKind } from '../../shared/graph';
+import type { RequestTrace } from '../../shared/request-trace';
 
 interface Graph3DProps {
   nodes: AtlasNode[];
   edges: AtlasEdge[];
   search: string;
   selectedId?: string;
+  requestTrace: RequestTrace | null;
   onSelect: (node: AtlasNode | null) => void;
 }
 
@@ -31,6 +33,7 @@ interface ThreeLinkData {
   kind: EdgeKind;
   label?: string;
   change?: AtlasEdge['change'];
+  requestTraceState?: 'path' | 'failure';
 }
 
 const COLOR_BY_KIND: Record<NodeKind, string> = {
@@ -55,7 +58,7 @@ const RADIUS_BY_KIND: Record<NodeKind, number> = {
   function: 2.4,
 };
 
-export default function Graph3D({ nodes, edges, search, selectedId, onSelect }: Graph3DProps) {
+export default function Graph3D({ nodes, edges, search, selectedId, requestTrace, onSelect }: Graph3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods<ThreeNodeData, ThreeLinkData>>(undefined);
   const [size, setSize] = useState({ width: 900, height: 650 });
@@ -75,19 +78,25 @@ export default function Graph3D({ nodes, edges, search, selectedId, onSelect }: 
   }, []);
 
   const graphData = useMemo(() => {
+    const traceNodeIds = new Set(requestTrace?.nodeIds ?? []);
+    const traceEdgeIds = new Set(requestTrace?.edgeIds ?? []);
+    const failureNodeId = requestTrace?.probableFailure?.nodeId;
     const graphNodes: ThreeNodeData[] = nodes.map((atlas) => ({
       id: atlas.id,
       atlas,
-      color: atlas.metadata?.diffStatus === 'removed'
+      color: atlas.id === failureNodeId
+        ? '#f06f83'
+        : traceNodeIds.has(atlas.id)
+          ? '#7ee2c5'
+          : atlas.metadata?.diffStatus === 'removed'
         ? '#d96d7d'
         : atlas.metadata?.diffStatus === 'modified'
           ? '#70aee0'
           : atlas.metadata?.diffStatus === 'added'
             ? '#e2c767'
             : COLOR_BY_KIND[atlas.kind],
-      dimmed: Boolean(normalizedSearch) && !`${atlas.label} ${atlas.path ?? ''} ${atlas.language ?? ''}`
-        .toLowerCase()
-        .includes(normalizedSearch),
+      dimmed: !traceNodeIds.has(atlas.id) && atlas.id !== failureNodeId && Boolean(normalizedSearch)
+        && !`${atlas.label} ${atlas.path ?? ''} ${atlas.language ?? ''}`.toLowerCase().includes(normalizedSearch),
     }));
     const graphLinks: ThreeLinkData[] = edges.map((edge) => ({
       source: edge.source,
@@ -95,9 +104,12 @@ export default function Graph3D({ nodes, edges, search, selectedId, onSelect }: 
       kind: edge.kind,
       label: edge.label,
       change: edge.change,
+      requestTraceState: traceEdgeIds.has(edge.id)
+        ? requestTrace?.probableFailure?.nodeId === edge.target ? 'failure' : 'path'
+        : undefined,
     }));
     return { nodes: graphNodes, links: graphLinks };
-  }, [edges, nodes, normalizedSearch]);
+  }, [edges, nodes, normalizedSearch, requestTrace]);
 
   const createNodeObject = useCallback((node: NodeObject<ThreeNodeData>) => {
     const atlas = node.atlas;
@@ -168,13 +180,13 @@ export default function Graph3D({ nodes, edges, search, selectedId, onSelect }: 
         nodeLabel={(node) => `${node.atlas.kind} · ${node.atlas.label}`}
         nodeThreeObject={createNodeObject}
         nodeThreeObjectExtend={false}
-        linkColor={(link) => link.change === 'removed' ? '#b95768' : link.change === 'added' ? '#c9ae55' : link.kind === 'uses' ? '#a35d82' : link.kind === 'calls' ? '#d18b55' : link.kind === 'imports' ? '#3f739d' : '#3b4654'}
-        linkWidth={(link) => link.kind === 'contains' ? 0.55 : 1.1}
+        linkColor={(link) => link.requestTraceState === 'failure' ? '#f06f83' : link.requestTraceState === 'path' ? '#7ee2c5' : link.change === 'removed' ? '#b95768' : link.change === 'added' ? '#c9ae55' : link.kind === 'uses' ? '#a35d82' : link.kind === 'calls' ? '#d18b55' : link.kind === 'imports' ? '#3f739d' : '#3b4654'}
+        linkWidth={(link) => link.requestTraceState ? 2.3 : link.kind === 'contains' ? 0.55 : 1.1}
         linkOpacity={0.42}
         linkDirectionalArrowLength={(link) => link.kind === 'contains' ? 1.6 : 2.7}
         linkDirectionalArrowRelPos={1}
-        linkDirectionalParticles={(link) => link.change !== 'removed' && (link.kind === 'imports' || link.kind === 'calls') ? 1 : 0}
-        linkDirectionalParticleColor={() => '#78b9e9'}
+        linkDirectionalParticles={(link) => link.requestTraceState ? 3 : link.change !== 'removed' && (link.kind === 'imports' || link.kind === 'calls') ? 1 : 0}
+        linkDirectionalParticleColor={(link) => link.requestTraceState === 'failure' ? '#f06f83' : link.requestTraceState === 'path' ? '#7ee2c5' : '#78b9e9'}
         linkDirectionalParticleSpeed={0.004}
         linkDirectionalParticleWidth={1.4}
         warmupTicks={70}

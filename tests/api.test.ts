@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from '../src/server/app.js';
 import type { AnalysisJob, AnalysisSnapshotSummary, StoredAnalysisSnapshot } from '../src/shared/graph.js';
+import type { RequestProbeResult } from '../src/shared/request-trace.js';
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.resolve(currentDirectory, '../examples/sample-commerce');
@@ -79,6 +80,53 @@ describe('API', () => {
       payload: { path: fixturePath, compareRef: '--output=/tmp/atlas' },
     });
     expect(response.statusCode).toBe(400);
+  });
+
+  it('validates and executes a request probe through a replaceable service', async () => {
+    const expected: RequestProbeResult = {
+      id: 'probe-id',
+      method: 'POST',
+      url: 'http://127.0.0.1:3000/products',
+      startedAt: new Date(0).toISOString(),
+      durationMs: 8,
+      ok: true,
+      status: 201,
+      statusText: 'Created',
+      responseHeaders: { 'content-type': 'application/json' },
+      responseBody: '{"id":"1"}',
+      responseTruncated: false,
+    };
+    app = await createApp({
+      logger: false,
+      databasePath: ':memory:',
+      requestProbe: async (input) => ({ ...expected, method: input.method, url: input.url }),
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/request-probes',
+      payload: { method: 'POST', url: expected.url, body: '{"name":"demo"}' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(expected);
+    const invalid = await app.inject({
+      method: 'POST',
+      url: '/api/request-probes',
+      payload: { method: 'TRACE', url: expected.url },
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
+
+  it('rejects non-loopback request probes', async () => {
+    app = await createApp({ logger: false, databasePath: ':memory:' });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/request-probes',
+      payload: { method: 'GET', url: 'https://example.com' },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: 'Request Trace разрешает запросы только к localhost/loopback.' });
   });
 
   it('runs analysis in the background and persists the completed snapshot', async () => {

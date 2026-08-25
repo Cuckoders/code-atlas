@@ -7,8 +7,10 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import staticFiles from '@fastify/static';
 import type { AnalysisJobPriority, ProjectAnalysis } from '../shared/graph.js';
+import type { RequestProbeInput, RequestProbeResult } from '../shared/request-trace.js';
 import { AnalysisQueue } from './analysis-queue.js';
 import { AnalysisError, analyzeProject, type AnalyzeProjectOptions } from './analyzer.js';
+import { executeRequestProbe, RequestProbeValidationError } from './request-probe.js';
 import { SnapshotStore } from './snapshot-store.js';
 
 interface CreateAppOptions {
@@ -19,6 +21,7 @@ interface CreateAppOptions {
   analyze?: (projectPath: string, options: AnalyzeProjectOptions) => Promise<ProjectAnalysis>;
   analysisConcurrency?: number;
   apiToken?: string;
+  requestProbe?: (input: RequestProbeInput) => Promise<RequestProbeResult>;
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<FastifyInstance> {
@@ -57,6 +60,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     (error) => app.log.error(error),
     options.analysisConcurrency,
   );
+  const requestProbe = options.requestProbe ?? executeRequestProbe;
   app.addHook('onClose', async () => {
     await queue.close();
     snapshots.close();
@@ -70,6 +74,24 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   }
 
   app.get('/api/health', async () => ({ status: 'ok' }));
+
+  app.post<{ Body: RequestProbeInput }>('/api/request-probes', {
+    config: {
+      rateLimit: { max: 20, timeWindow: '1 minute' },
+    },
+    schema: {
+      body: requestProbeSchema,
+    },
+  }, async (request, reply) => {
+    try {
+      return await requestProbe(request.body);
+    } catch (error) {
+      if (error instanceof RequestProbeValidationError) {
+        return reply.status(400).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
 
   app.get('/api/demo', async () => {
     const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -147,7 +169,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       return reply.status(400).send({ error: 'Проверьте параметры запроса.' });
     }
     app.log.error(error);
-    return reply.status(500).send({ error: 'Не удалось проанализировать проект.' });
+    return reply.status(500).send({ error: 'Внутренняя ошибка Code Atlas.' });
   });
 
   return app;
@@ -185,5 +207,22 @@ const identifierParamsSchema = {
       type: 'string',
       pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
     },
+  },
+} as const;
+
+const requestProbeSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['method', 'url'],
+  properties: {
+    method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] },
+    url: { type: 'string', minLength: 1, maxLength: 2_048 },
+    headers: {
+      type: 'object',
+      maxProperties: 20,
+      propertyNames: { pattern: "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$" },
+      additionalProperties: { type: 'string', maxLength: 2_048, pattern: '^[^\\r\\n]*$' },
+    },
+    body: { type: 'string', maxLength: 12_288 },
   },
 } as const;

@@ -15,6 +15,7 @@
 - сохранение до 50 последних снимков в локальную SQLite-базу и повторное открытие карты без сканирования проекта;
 - инкрементальный SHA-256-кэш AST: неизменённые файлы не парсятся повторно, а доля переиспользования показывается в боковой панели;
 - поиск и фильтры слоев;
+- Request Trace: отправка HTTP-запроса на локальный сервис, показ фактического ответа, сопоставление endpoint с route и подсветка вероятного пути/точки отказа на 2D- и 3D-карте;
 - сервисы по manifest-файлам (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, Maven/Gradle и другие);
 - языковая статистика для TypeScript/JavaScript, Python, Java/Kotlin, Go, Rust, C#, PHP, Ruby, Swift, Dart и web-файлов;
 - глубокий разбор классов, интерфейсов, функций, методов, контроллеров и HTTP-маршрутов для TypeScript/JavaScript и Python;
@@ -36,6 +37,12 @@
 - проваливание в подграф сервиса или модуля с breadcrumbs и сохранением внешних зависимостей;
 - обнаружение PostgreSQL, MySQL/MariaDB, MongoDB, Redis, SQLite, Elasticsearch и DynamoDB;
 - безопасные ограничения: локальный bind, CORS/HTTP-заголовки, rate limit, игнорирование зависимостей/сборок, симлинков и больших файлов, лимит на размер снимка и фрагменты исходника до 200 строк/12 000 символов.
+
+### Request Trace
+
+Откройте «Запрос» над картой, выберите HTTP-метод и укажите URL запущенного локального сервиса, например `http://127.0.0.1:3000/products`. Code Atlas покажет статус и ограниченный preview ответа, сопоставит URL с найденным route и подсветит вероятную цепочку до контроллеров, вызываемых классов, репозиториев и инфраструктуры.
+
+Это гибрид фактического HTTP-ответа и статического анализа, а не инструментальная трассировка процесса: точка падения является вероятной. Для точного exception/span потребуется последующее подключение OpenTelemetry. Из соображений безопасности разрешены только `localhost`, `127.0.0.1` и `::1`; redirects, URL credentials и транспортные заголовки запрещены, тело и preview ответа ограничены, запросы не сохраняются.
 
 ## Запуск
 
@@ -97,6 +104,7 @@ Browser / Tauri WebView / React Flow
         │  POST job · poll progress · open snapshot
         ▼
 token-protected Fastify loopback API ──► priority queue ──► worker pool (max 2)
+        │  └─ safe request probe │                 │
         │                         ▲                 │
         │                         └── progress ─────┤
         └── SQLite snapshots + AST cache ◄── IPC ──┤
@@ -119,9 +127,11 @@ token-protected Fastify loopback API ──► priority queue ──► worker p
 - `DELETE /api/analysis-jobs/:id` — отменить ожидающее или активное задание;
 - `GET /api/snapshots` — список сохранённых снимков;
 - `GET /api/snapshots/:id` — открыть готовую карту.
+- `POST /api/request-probes` — выполнить ограниченный HTTP-запрос только к loopback и вернуть фактический результат для Request Trace.
 
 ## Следующий этап
 
-1. Подключить Windows Authenticode и Tauri updater после создания GitHub remote и выпуска ключей подписи.
-2. Опциональный sandboxed LSP-режим с явным согласием пользователя для более точного разрешения динамических вызовов.
-3. Swift Tree-sitter WASM-адаптер.
+1. Подключить OpenTelemetry spans к Request Trace для точного runtime-пути и stack trace вместо вероятностной точки отказа.
+2. Подключить Windows Authenticode и Tauri updater после создания GitHub remote и выпуска ключей подписи.
+3. Опциональный sandboxed LSP-режим с явным согласием пользователя для более точного разрешения динамических вызовов.
+4. Swift Tree-sitter WASM-адаптер.

@@ -23,9 +23,11 @@ import type {
   ProjectDiagnostic,
   StoredAnalysisSnapshot,
 } from '../shared/graph';
+import type { RequestTrace } from '../shared/request-trace';
 import { AtlasGraphNode, type AtlasGraphNodeData } from './components/AtlasGraphNode';
 import { Inspector } from './components/Inspector';
 import { ProjectSidebar } from './components/ProjectSidebar';
+import { RequestTracePanel } from './components/RequestTracePanel';
 import { apiFetch, chooseProjectDirectory, hasNativeDirectoryPicker } from './desktop';
 
 const nodeTypes = { atlas: AtlasGraphNode };
@@ -71,6 +73,8 @@ export function App() {
   const [activeSnapshotId, setActiveSnapshotId] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [requestPanelOpen, setRequestPanelOpen] = useState(false);
+  const [requestTrace, setRequestTrace] = useState<RequestTrace | null>(null);
   const activeRequest = useRef<AbortController | null>(null);
   const nativeDirectoryPicker = useMemo(() => hasNativeDirectoryPicker(), []);
 
@@ -79,6 +83,7 @@ export function App() {
     setActiveSnapshotId(snapshotId);
     setSelectedNode(null);
     setFocusNode(null);
+    setRequestTrace(null);
   }, []);
 
   const loadAnalysis = useCallback(async (url: string, init?: RequestInit) => {
@@ -234,8 +239,8 @@ export function App() {
   }, [analysis, focusNode]);
 
   const graph = useMemo(
-    () => createFlowGraph(filteredGraph.nodes, filteredGraph.edges, deferredSearch),
-    [deferredSearch, filteredGraph],
+    () => createFlowGraph(filteredGraph.nodes, filteredGraph.edges, deferredSearch, requestTrace),
+    [deferredSearch, filteredGraph, requestTrace],
   );
 
   const handleAnalyze = (event: React.FormEvent) => {
@@ -258,6 +263,7 @@ export function App() {
 
   const handleNodeClick = useCallback<NodeMouseHandler>((_event, flowNode) => {
     setSelectedNode((flowNode.data as AtlasGraphNodeData).atlas);
+    setRequestPanelOpen(false);
   }, []);
 
   const handleNodeDoubleClick = useCallback<NodeMouseHandler>((_event, flowNode) => {
@@ -306,6 +312,28 @@ export function App() {
   const selectedDiagnostics = useMemo(() => (
     selectedNode ? analysis?.diagnostics.filter((item) => item.nodeIds.includes(selectedNode.id)) ?? [] : []
   ), [analysis?.diagnostics, selectedNode]);
+
+  const handleRequestTrace = useCallback((nextTrace: RequestTrace | null) => {
+    setRequestTrace(nextTrace);
+    if (!nextTrace) return;
+    setFocusNode(null);
+    setSearch('');
+    setVisibleKinds((current) => {
+      const next = new Set(current);
+      for (const nodeId of nextTrace.nodeIds) {
+        const kind = analysis?.nodes.find((node) => node.id === nodeId)?.kind;
+        if (kind) next.add(kind);
+      }
+      return next;
+    });
+  }, [analysis?.nodes]);
+
+  const selectRequestTraceNode = useCallback((nodeId: string) => {
+    const node = analysis?.nodes.find((item) => item.id === nodeId);
+    if (!node) return;
+    setSelectedNode(node);
+    setRequestPanelOpen(false);
+  }, [analysis?.nodes]);
 
   if (!analysis && loading) {
     return <LoadingScreen label="Строим карту демонстрационного проекта" />;
@@ -412,10 +440,21 @@ export function App() {
             </nav>
             <small>{graph.nodes.length} узлов · {graph.edges.length} связей</small>
           </div>
-          <label className="search-field">
-            <span>⌕</span>
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Найти модуль, класс, путь…" />
-          </label>
+          <div className="canvas-toolbar__actions">
+            <button
+              type="button"
+              className={`request-trace-toggle ${requestPanelOpen ? 'is-active' : ''}`}
+              aria-pressed={requestPanelOpen}
+              onClick={() => {
+                setSelectedNode(null);
+                setRequestPanelOpen((current) => !current);
+              }}
+            ><span>↗</span> Запрос</button>
+            <label className="search-field">
+              <span>⌕</span>
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Найти модуль, класс, путь…" />
+            </label>
+          </div>
         </div>
 
         {error ? <div className="error-banner">{error}<button type="button" onClick={() => setError(null)}>×</button></div> : null}
@@ -441,7 +480,10 @@ export function App() {
               pannable
               zoomable
               position="bottom-right"
-              nodeColor={(node) => COLOR_BY_KIND[(node.data as AtlasGraphNodeData).atlas.kind]}
+              nodeColor={(node) => {
+                const data = node.data as AtlasGraphNodeData;
+                return data.requestTraceState === 'failure' ? '#f06f83' : data.requestTraceState === 'path' ? '#7ee2c5' : COLOR_BY_KIND[data.atlas.kind];
+              }}
               maskColor="rgba(6, 8, 13, .72)"
             />
           </ReactFlow>
@@ -452,6 +494,7 @@ export function App() {
               edges={filteredGraph.edges}
               search={deferredSearch}
               selectedId={selectedNode?.id}
+              requestTrace={requestTrace}
               onSelect={setSelectedNode}
             />
           </Suspense>
@@ -485,6 +528,16 @@ export function App() {
             </div>
           </div>
         ) : null}
+
+        <RequestTracePanel
+          key={`${analysis.summary.rootPath}:${activeSnapshotId ?? 'live'}`}
+          analysis={analysis}
+          open={requestPanelOpen}
+          trace={requestTrace}
+          onClose={() => setRequestPanelOpen(false)}
+          onTrace={handleRequestTrace}
+          onSelectNode={selectRequestTraceNode}
+        />
       </section>
 
       <Inspector
@@ -540,6 +593,7 @@ function createFlowGraph(
   atlasNodes: AtlasNode[],
   atlasEdges: AtlasEdge[],
   search: string,
+  requestTrace: RequestTrace | null,
 ): { nodes: Node<AtlasGraphNodeData>[]; edges: Edge[] } {
   const visibleAtlasNodes = atlasNodes;
   const visibleIds = new Set(visibleAtlasNodes.map((node) => node.id));
@@ -551,6 +605,9 @@ function createFlowGraph(
           .map((node) => node.id)
       : visibleIds,
   );
+  const requestNodeIds = new Set(requestTrace?.nodeIds ?? []);
+  const requestEdgeIds = new Set(requestTrace?.edgeIds ?? []);
+  const failureNodeId = requestTrace?.probableFailure?.nodeId;
 
   const nodes = visibleAtlasNodes.map((atlas): Node<AtlasGraphNodeData> => {
     const x = COLUMN_BY_KIND[atlas.kind];
@@ -561,7 +618,11 @@ function createFlowGraph(
       id: atlas.id,
       type: 'atlas',
       position: { x, y: spread },
-      data: { atlas, dimmed: Boolean(search) && !matchingIds.has(atlas.id) },
+      data: {
+        atlas,
+        dimmed: Boolean(search) && !matchingIds.has(atlas.id) && !requestNodeIds.has(atlas.id),
+        requestTraceState: atlas.id === failureNodeId ? 'failure' : requestNodeIds.has(atlas.id) ? 'path' : undefined,
+      },
       draggable: true,
       selected: false,
     };
@@ -569,23 +630,27 @@ function createFlowGraph(
 
   const edges = atlasEdges
     .filter((item) => visibleIds.has(item.source) && visibleIds.has(item.target))
-    .map((item): Edge => ({
-      id: item.id,
-      source: item.source,
-      target: item.target,
-      label: item.kind === 'imports' ? undefined : item.kind,
-      type: 'smoothstep',
-      animated: item.change !== 'removed' && (item.change === 'added' || item.kind === 'imports' || item.kind === 'calls'),
-      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-      style: {
-        stroke: item.change === 'removed' ? '#b95768' : item.change === 'added' ? '#c9ae55' : item.kind === 'imports' ? '#416b8c' : item.kind === 'calls' ? '#d18b55' : item.kind === 'uses' ? '#9b6586' : '#3b4350',
-        strokeWidth: item.kind === 'contains' ? 1 : 1.5,
-        strokeDasharray: item.change === 'removed' ? '5 4' : undefined,
-        opacity: item.change === 'removed' ? 0.72 : 1,
-      },
-      labelStyle: { fill: '#667083', fontSize: 9 },
-      labelBgStyle: { fill: '#0d1017', fillOpacity: 0.8 },
-    }));
+    .map((item): Edge => {
+      const isRequestPath = requestEdgeIds.has(item.id);
+      const leadsToFailure = isRequestPath && item.target === failureNodeId;
+      return {
+        id: item.id,
+        source: item.source,
+        target: item.target,
+        label: item.kind === 'imports' ? undefined : item.kind,
+        type: 'smoothstep',
+        animated: isRequestPath || (item.change !== 'removed' && (item.change === 'added' || item.kind === 'imports' || item.kind === 'calls')),
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+        style: {
+          stroke: leadsToFailure ? '#f06f83' : isRequestPath ? '#7ee2c5' : item.change === 'removed' ? '#b95768' : item.change === 'added' ? '#c9ae55' : item.kind === 'imports' ? '#416b8c' : item.kind === 'calls' ? '#d18b55' : item.kind === 'uses' ? '#9b6586' : '#3b4350',
+          strokeWidth: isRequestPath ? 2.6 : item.kind === 'contains' ? 1 : 1.5,
+          strokeDasharray: item.change === 'removed' ? '5 4' : undefined,
+          opacity: isRequestPath ? 1 : item.change === 'removed' ? 0.72 : 1,
+        },
+        labelStyle: { fill: isRequestPath ? '#98ead4' : '#667083', fontSize: 9 },
+        labelBgStyle: { fill: '#0d1017', fillOpacity: 0.8 },
+      };
+    });
 
   return { nodes, edges };
 }
