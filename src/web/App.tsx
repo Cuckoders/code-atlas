@@ -33,6 +33,7 @@ import { RequestTraceEdge, type RequestTraceEdgeData } from './components/Reques
 import { RequestTracePanel } from './components/RequestTracePanel';
 import { apiFetch, chooseProjectDirectory, hasNativeDirectoryPicker } from './desktop';
 import { layoutAtlasGraph, type GraphLayoutMode } from './graph-layout';
+import type { TracePlaybackOptions } from './trace-playback';
 
 const nodeTypes = { atlas: AtlasGraphNode, serviceZone: GraphZoneNode, layerZone: GraphZoneNode };
 const edgeTypes = { requestTrace: RequestTraceEdge };
@@ -75,6 +76,7 @@ export function App() {
   const [requestPanelOpen, setRequestPanelOpen] = useState(false);
   const [runtimePanelOpen, setRuntimePanelOpen] = useState(false);
   const [requestTrace, setRequestTrace] = useState<RequestTrace | null>(null);
+  const [tracePlayback, setTracePlayback] = useState<TracePlaybackOptions>({ speed: 1, playing: true });
   const [graphLayoutMode, setGraphLayoutMode] = useState<GraphLayoutMode>('services');
   const activeRequest = useRef<AbortController | null>(null);
   const flowInstance = useRef<ReactFlowInstance | null>(null);
@@ -254,11 +256,12 @@ export function App() {
       filteredGraph.edges,
       deferredSearch,
       requestTrace,
+      tracePlayback,
       graphLayoutMode,
       analysis?.nodes ?? filteredGraph.nodes,
       analysis?.edges ?? filteredGraph.edges,
     ),
-    [analysis?.edges, analysis?.nodes, deferredSearch, filteredGraph, graphLayoutMode, requestTrace],
+    [analysis?.edges, analysis?.nodes, deferredSearch, filteredGraph, graphLayoutMode, requestTrace, tracePlayback],
   );
 
   useEffect(() => {
@@ -367,8 +370,6 @@ export function App() {
     const node = analysis?.nodes.find((item) => item.id === nodeId);
     if (!node) return;
     setSelectedNode(node);
-    setRequestPanelOpen(false);
-    setRuntimePanelOpen(false);
   }, [analysis?.nodes]);
 
   if (!analysis && loading) {
@@ -459,7 +460,7 @@ export function App() {
         loading={loading}
       />
 
-      <section className={`canvas-shell ${workspaceMode === 'map' && (requestPanelOpen || runtimePanelOpen) ? 'is-request-panel-open' : ''}`}>
+      <section className={`canvas-shell ${workspaceMode === 'map' && requestPanelOpen ? 'is-request-panel-open' : ''} ${workspaceMode === 'map' && runtimePanelOpen ? 'is-runtime-panel-open' : ''}`}>
         <div className="canvas-toolbar">
           <div className="canvas-toolbar__context">
             <button
@@ -602,6 +603,7 @@ export function App() {
               search={deferredSearch}
               selectedId={selectedNode?.id}
               requestTrace={requestTrace}
+              tracePlayback={tracePlayback}
               onSelect={setSelectedNode}
             />
           </Suspense>
@@ -643,8 +645,10 @@ export function App() {
               analysis={analysis}
               open={requestPanelOpen}
               trace={requestTrace}
+              playback={tracePlayback}
               onClose={() => setRequestPanelOpen(false)}
               onTrace={handleRequestTrace}
+              onPlaybackChange={setTracePlayback}
               onSelectNode={selectRequestTraceNode}
             />
             {runtimePanelOpen ? (
@@ -652,8 +656,10 @@ export function App() {
                 <RuntimeTracePanel
                   analysis={analysis}
                   open={runtimePanelOpen}
+                  playback={tracePlayback}
                   onClose={() => setRuntimePanelOpen(false)}
                   onTrace={handleRequestTrace}
+                  onPlaybackChange={setTracePlayback}
                   onSelectNode={selectRequestTraceNode}
                 />
               </Suspense>
@@ -726,6 +732,7 @@ function createFlowGraph(
   atlasEdges: AtlasEdge[],
   search: string,
   requestTrace: RequestTrace | null,
+  tracePlayback: TracePlaybackOptions,
   layoutMode: GraphLayoutMode,
   hierarchyNodes: AtlasNode[],
   hierarchyEdges: AtlasEdge[],
@@ -797,6 +804,8 @@ function createFlowGraph(
           traceIndex,
           traceCount: requestTrace?.edgeIds.length ?? 1,
           leadsToFailure,
+          playbackSpeed: tracePlayback.speed,
+          playing: tracePlayback.playing,
         } satisfies RequestTraceEdgeData : undefined,
         animated: !isRequestPath && item.change !== 'removed' && (item.change === 'added' || item.kind === 'imports' || item.kind === 'calls'),
         markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },

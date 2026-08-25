@@ -11,13 +11,16 @@ import {
   type RequestTraceRole,
 } from '../../shared/request-trace';
 import { apiFetch } from '../desktop';
+import { TRACE_PLAYBACK_SPEEDS, type TracePlaybackOptions } from '../trace-playback';
 
 interface RequestTracePanelProps {
   analysis: ProjectAnalysis;
   open: boolean;
   trace: RequestTrace | null;
+  playback: TracePlaybackOptions;
   onClose: () => void;
   onTrace: (trace: RequestTrace | null) => void;
+  onPlaybackChange: (playback: TracePlaybackOptions) => void;
   onSelectNode: (nodeId: string) => void;
 }
 
@@ -35,8 +38,10 @@ export function RequestTracePanel({
   analysis,
   open,
   trace,
+  playback,
   onClose,
   onTrace,
+  onPlaybackChange,
   onSelectNode,
 }: RequestTracePanelProps) {
   const defaults = defaultRequest(analysis.nodes);
@@ -79,6 +84,7 @@ export function RequestTracePanel({
       }
       const probeResult = payload as RequestProbeResult;
       setProbe(probeResult);
+      onPlaybackChange({ speed: 1, playing: true });
       onTrace(traceProjectRequest(analysis, input, probeResult));
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
@@ -94,6 +100,7 @@ export function RequestTracePanel({
   const clearTrace = () => {
     setProbe(null);
     setError(null);
+    onPlaybackChange({ ...playback, playing: false });
     onTrace(null);
   };
 
@@ -153,6 +160,25 @@ export function RequestTracePanel({
           <div className="section-heading">
             <h3>Вероятный путь</h3>
             <span>{trace.steps.length}</span>
+          </div>
+          <div className="trace-playback-compact" aria-label="Скорость анимации Request Trace">
+            <button
+              type="button"
+              className="trace-playback-compact__toggle"
+              aria-label={playback.playing ? 'Приостановить анимацию трейса' : 'Продолжить анимацию трейса'}
+              onClick={() => onPlaybackChange({ ...playback, playing: !playback.playing })}
+            >{playback.playing ? 'Ⅱ Пауза' : '▶ Продолжить'}</button>
+            <div role="group" aria-label="Скорость трейса">
+              {TRACE_PLAYBACK_SPEEDS.map((speed) => (
+                <button
+                  type="button"
+                  className={playback.speed === speed ? 'is-active' : ''}
+                  aria-pressed={playback.speed === speed}
+                  key={speed}
+                  onClick={() => onPlaybackChange({ ...playback, speed })}
+                >{speed}×</button>
+              ))}
+            </div>
           </div>
           {trace.matchedRoute ? (
             <div className="request-trace-route">

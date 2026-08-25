@@ -27,7 +27,7 @@
 - blast radius выбранного компонента: прямые зависимости, потребители и транзитивно затронутые узлы с оценкой уровня влияния;
 - Request Trace: отправка HTTP-запроса на локальный сервис, показ фактического ответа, сопоставление endpoint с route и подсветка вероятного пути/точки отказа на 2D- и 3D-карте;
 - анимированный Request Trace: движущиеся маркеры вызова, подсветка затронутых зон и пульсирующая точка вероятного падения с поддержкой `prefers-reduced-motion`;
-- Runtime Trace: локальный OTLP/HTTP JSON collector, история до 100 trace-сессий на проект, waterfall spans, фактический exception/stack trace и подсветка измеренного пути на 2D- и 3D-карте;
+- Runtime Trace Debugger: локальный OTLP/HTTP JSON collector, поиск и фильтры по сессиям, проигрывание со скоростью 0.5–4×, пошаговая навигация, breakpoints, масштабируемый timeline, фактический exception/stack trace и синхронная подсветка измеренного пути на 2D- и 3D-карте;
 - сервисы по manifest-файлам (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, Maven/Gradle и другие);
 - языковая статистика для TypeScript/JavaScript, Python, Java/Kotlin, Go, Rust, C#, PHP, Ruby, Swift, Dart и web-файлов;
 - глубокий разбор классов, интерфейсов, функций, методов, контроллеров и HTTP-маршрутов для TypeScript/JavaScript и Python;
@@ -60,7 +60,9 @@
 
 ### Runtime Trace
 
-Кнопка «Трейсы» открывает локальный OTLP collector. Панель показывает endpoint и отдельный одноразовый заголовок `x-code-atlas-otlp-token`, который можно скопировать в JSON-совместимый OpenTelemetry exporter или локальный collector/agent. `projectPath` уже включён в endpoint и связывает spans с открытой картой. При поступлении данных Code Atlas сохраняет trace-сессии в SQLite, строит waterfall, показывает exception и stack trace и сопоставляет `service.name`, `http.route`, `db.system` и semantic conventions `code.*` с узлами статического графа.
+Кнопка «Трейсы» открывает локальный OTLP collector и отладчик сессий. Список поддерживает поиск и фильтрацию по статусу, а после выбора trace компактно сворачивается, освобождая место для инспектора. Воспроизведение можно поставить на паузу, пройти по span пошагово, ускорить от 0.5× до 4× или остановить breakpoint-ом на нужном span. Scrubber и timeline с масштабом 1×/2×/4× синхронно показывают достигнутый путь на карте. Ошибка вынесена в отдельный блок с сервисом, span, исходным файлом/строкой и раскрываемым stack trace.
+
+Панель также показывает endpoint и отдельный одноразовый заголовок `x-code-atlas-otlp-token`, который можно скопировать в JSON-совместимый OpenTelemetry exporter или локальный collector/agent. `projectPath` уже включён в endpoint и связывает spans с открытой картой. При поступлении данных Code Atlas сохраняет trace-сессии в SQLite и сопоставляет `service.name`, `http.route`, `db.system` и semantic conventions `code.*` с узлами статического графа.
 
 Сейчас принимается OTLP/HTTP JSON до 1 МБ и 500 spans за пакет; protobuf и gRPC будут добавлены следующим транспортным адаптером. Секретные атрибуты (`authorization`, cookies, passwords, tokens и API keys) заменяются на `[REDACTED]`, строки и stack trace ограничены. Для быстрой проверки кнопка «Демо-трасса с ошибкой» создаёт локальную сессию без запуска анализируемого проекта.
 

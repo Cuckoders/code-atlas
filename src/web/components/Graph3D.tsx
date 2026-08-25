@@ -7,6 +7,7 @@ import SpriteText from 'three-spritetext';
 import * as THREE from 'three';
 import type { AtlasEdge, AtlasNode, EdgeKind, NodeKind } from '../../shared/graph';
 import type { RequestTrace } from '../../shared/request-trace';
+import type { TracePlaybackOptions } from '../trace-playback';
 
 interface Graph3DProps {
   nodes: AtlasNode[];
@@ -14,6 +15,7 @@ interface Graph3DProps {
   search: string;
   selectedId?: string;
   requestTrace: RequestTrace | null;
+  tracePlayback: TracePlaybackOptions;
   onSelect: (node: AtlasNode | null) => void;
 }
 
@@ -58,7 +60,7 @@ const RADIUS_BY_KIND: Record<NodeKind, number> = {
   function: 2.4,
 };
 
-export default function Graph3D({ nodes, edges, search, selectedId, requestTrace, onSelect }: Graph3DProps) {
+export default function Graph3D({ nodes, edges, search, selectedId, requestTrace, tracePlayback, onSelect }: Graph3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods<ThreeNodeData, ThreeLinkData>>(undefined);
   const [size, setSize] = useState({ width: 900, height: 650 });
@@ -185,9 +187,9 @@ export default function Graph3D({ nodes, edges, search, selectedId, requestTrace
         linkOpacity={0.42}
         linkDirectionalArrowLength={(link) => link.kind === 'contains' ? 1.6 : 2.7}
         linkDirectionalArrowRelPos={1}
-        linkDirectionalParticles={(link) => link.requestTraceState ? 3 : link.change !== 'removed' && (link.kind === 'imports' || link.kind === 'calls') ? 1 : 0}
+        linkDirectionalParticles={(link) => link.requestTraceState ? tracePlayback.playing ? 3 : 0 : link.change !== 'removed' && (link.kind === 'imports' || link.kind === 'calls') ? 1 : 0}
         linkDirectionalParticleColor={(link) => link.requestTraceState === 'failure' ? '#f06f83' : link.requestTraceState === 'path' ? '#7ee2c5' : '#78b9e9'}
-        linkDirectionalParticleSpeed={0.004}
+        linkDirectionalParticleSpeed={(link) => link.requestTraceState ? 0.004 * tracePlayback.speed : 0.004}
         linkDirectionalParticleWidth={1.4}
         warmupTicks={70}
         cooldownTicks={240}
