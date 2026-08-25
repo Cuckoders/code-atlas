@@ -146,7 +146,8 @@ export interface ProjectAnalysis {
   warnings: string[];
 }
 
-export type AnalysisJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type AnalysisJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type AnalysisJobPriority = 'normal' | 'high';
 
 export type AnalysisProgressPhase = 'scanning' | 'parsing' | 'comparing' | 'finalizing';
 
@@ -160,6 +161,7 @@ export interface AnalysisProgress {
 export interface AnalysisJob {
   id: string;
   status: AnalysisJobStatus;
+  priority: AnalysisJobPriority;
   projectPath: string;
   compareRef?: string;
   createdAt: string;

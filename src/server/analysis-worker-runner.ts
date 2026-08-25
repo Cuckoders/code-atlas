@@ -12,12 +12,20 @@ import type { SnapshotStore } from './snapshot-store.js';
 
 const MAX_ANALYSIS_DURATION_MS = 10 * 60 * 1_000;
 
+export class AnalysisWorkerCancelledError extends Error {
+  constructor() {
+    super('Analysis worker was cancelled');
+  }
+}
+
 export function runAnalysisWorker(
   projectPath: string,
   compareRef: string | undefined,
   snapshots: SnapshotStore,
   onProgress: (progress: AnalysisProgress) => void,
+  signal?: AbortSignal,
 ): Promise<ProjectAnalysis> {
+  if (signal?.aborted) return Promise.reject(new AnalysisWorkerCancelledError());
   const expectedProjectPath = path.resolve(projectPath.trim());
   const sourceMode = import.meta.url.endsWith('.ts');
   const workerUrl = new URL(sourceMode ? './analysis-worker.ts' : './analysis-worker.js', import.meta.url);
@@ -34,6 +42,10 @@ export function runAnalysisWorker(
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    const cancel = () => {
+      finish(() => reject(new AnalysisWorkerCancelledError()));
+      void worker.terminate();
+    };
     const timeout = setTimeout(() => {
       finish(() => reject(new Error('Analysis worker timed out')));
       void worker.terminate();
@@ -43,8 +55,10 @@ export function runAnalysisWorker(
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      signal?.removeEventListener('abort', cancel);
       callback();
     };
+    signal?.addEventListener('abort', cancel, { once: true });
 
     worker.on('message', (value: unknown) => {
       const message = validateWorkerMessage(value);

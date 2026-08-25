@@ -110,9 +110,11 @@ export interface AnalyzeProjectOptions {
   compareRef?: string;
   parseCache?: ParseCache;
   onProgress?: (progress: AnalysisProgress) => void;
+  signal?: AbortSignal;
 }
 
 export async function analyzeProject(inputPath: string, options: AnalyzeProjectOptions = {}): Promise<ProjectAnalysis> {
+  options.signal?.throwIfAborted();
   const startedAt = performance.now();
   reportProgress(options.onProgress, 'scanning', 0, 0);
   const rootPath = path.resolve(inputPath.trim());
@@ -146,6 +148,7 @@ export async function analyzeProject(inputPath: string, options: AnalyzeProjectO
     options.parseCache,
     options.onProgress,
     'parsing',
+    options.signal,
   );
   if (!options.compareRef) {
     reportProgress(options.onProgress, 'finalizing', 1, 1);
@@ -175,6 +178,7 @@ export async function analyzeProject(inputPath: string, options: AnalyzeProjectO
     options.parseCache,
     options.onProgress,
     'comparing',
+    options.signal,
   );
   if (snapshot.truncated) {
     analysis.warnings.push('Исторический Git-снимок ограничен: архитектурный diff может быть частичным.');
@@ -196,6 +200,7 @@ async function buildProjectAnalysis(
   parseCache?: ParseCache,
   onProgress?: (progress: AnalysisProgress) => void,
   progressPhase: AnalysisProgressPhase = 'parsing',
+  signal?: AbortSignal,
 ): Promise<ProjectAnalysis> {
   const projectName = path.basename(rootPath);
   const projectId = 'project:root';
@@ -253,6 +258,7 @@ async function buildProjectAnalysis(
   reportProgress(onProgress, progressPhase, processedFiles, eligibleFiles.length);
 
   for (const file of sourceFiles) {
+    signal?.throwIfAborted();
     const extension = path.extname(file.relativePath).toLowerCase();
     const language = LANGUAGE_BY_EXTENSION[extension];
     languageCounts.set(language, (languageCounts.get(language) ?? 0) + 1);

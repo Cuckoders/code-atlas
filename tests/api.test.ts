@@ -50,6 +50,7 @@ describe('API', () => {
       payload: { path: fixturePath },
     });
     expect(createResponse.statusCode).toBe(202);
+    expect(createResponse.json<AnalysisJob>().priority).toBe('normal');
 
     const completed = await waitForJob(app, createResponse.json<AnalysisJob>().id);
     expect(completed).toEqual(expect.objectContaining({ status: 'completed', snapshotId: expect.any(String) }));
@@ -95,6 +96,48 @@ describe('API', () => {
     expect(malformed.statusCode).toBe(400);
     expect(missing.statusCode).toBe(404);
     expect(missing.json()).toEqual({ error: 'Задание анализа не найдено.' });
+  });
+
+  it('cancels a running analysis through the job API', async () => {
+    app = await createApp({
+      logger: false,
+      databasePath: ':memory:',
+      analysisConcurrency: 1,
+      analyze: (_projectPath, options) => new Promise((_resolve, reject) => {
+        options.onProgress?.({ phase: 'parsing', processedFiles: 1, totalFiles: 10, percentage: 10 });
+        options.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+      }),
+    });
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/api/analysis-jobs',
+      payload: { path: fixturePath, priority: 'high' },
+    });
+    const jobId = createResponse.json<AnalysisJob>().id;
+
+    const cancelResponse = await app.inject({ method: 'DELETE', url: `/api/analysis-jobs/${jobId}` });
+    expect(cancelResponse.statusCode).toBe(200);
+    expect(cancelResponse.json<AnalysisJob>()).toEqual(expect.objectContaining({
+      id: jobId,
+      status: 'cancelled',
+      priority: 'high',
+      finishedAt: expect.any(String),
+    }));
+
+    const statusResponse = await app.inject({ method: 'GET', url: `/api/analysis-jobs/${jobId}` });
+    expect(statusResponse.json<AnalysisJob>().status).toBe('cancelled');
+    expect((await app.inject({ method: 'GET', url: '/api/snapshots' })).json()).toEqual([]);
+  });
+
+  it('rejects unsupported analysis priorities', async () => {
+    app = await createApp({ logger: false, databasePath: ':memory:' });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/analysis-jobs',
+      payload: { path: fixturePath, priority: 'critical' },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: 'Проверьте параметры запроса.' });
   });
 });
 

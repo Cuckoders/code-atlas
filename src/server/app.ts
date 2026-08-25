@@ -5,7 +5,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import staticFiles from '@fastify/static';
-import type { ProjectAnalysis } from '../shared/graph.js';
+import type { AnalysisJobPriority, ProjectAnalysis } from '../shared/graph.js';
 import { AnalysisQueue } from './analysis-queue.js';
 import { AnalysisError, analyzeProject, type AnalyzeProjectOptions } from './analyzer.js';
 import { SnapshotStore } from './snapshot-store.js';
@@ -16,6 +16,7 @@ interface CreateAppOptions {
   staticRoot?: string;
   databasePath?: string;
   analyze?: (projectPath: string, options: AnalyzeProjectOptions) => Promise<ProjectAnalysis>;
+  analysisConcurrency?: number;
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<FastifyInstance> {
@@ -32,7 +33,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
 
   const defaultDatabasePath = path.resolve(process.cwd(), '.code-atlas/code-atlas.sqlite');
   const snapshots = new SnapshotStore(options.databasePath ?? process.env.CODE_ATLAS_DATABASE ?? defaultDatabasePath);
-  const queue = new AnalysisQueue(snapshots, options.analyze, (error) => app.log.error(error));
+  const queue = new AnalysisQueue(
+    snapshots,
+    options.analyze,
+    (error) => app.log.error(error),
+    options.analysisConcurrency,
+  );
   app.addHook('onClose', async () => {
     await queue.close();
     snapshots.close();
@@ -69,15 +75,15 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     return analysis;
   });
 
-  app.post<{ Body: { path: string; compareRef?: string } }>('/api/analysis-jobs', {
+  app.post<{ Body: { path: string; compareRef?: string; priority?: AnalysisJobPriority } }>('/api/analysis-jobs', {
     config: {
       rateLimit: { max: 10, timeWindow: '1 minute' },
     },
     schema: {
-      body: analysisRequestSchema,
+      body: analysisJobRequestSchema,
     },
   }, async (request, reply) => {
-    const job = queue.enqueue(request.body.path, request.body.compareRef);
+    const job = queue.enqueue(request.body.path, request.body.compareRef, request.body.priority);
     return reply.status(202).send(job);
   });
 
@@ -85,6 +91,16 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     schema: { params: identifierParamsSchema },
   }, async (request, reply) => {
     const job = queue.get(request.params.id);
+    return job ?? reply.status(404).send({ error: 'Задание анализа не найдено.' });
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/analysis-jobs/:id', {
+    config: {
+      rateLimit: { max: 30, timeWindow: '1 minute' },
+    },
+    schema: { params: identifierParamsSchema },
+  }, async (request, reply) => {
+    const job = queue.cancel(request.params.id);
     return job ?? reply.status(404).send({ error: 'Задание анализа не найдено.' });
   });
 
@@ -131,6 +147,14 @@ const analysisRequestSchema = {
       maxLength: 128,
       pattern: '^[A-Za-z0-9][A-Za-z0-9._/@-]*$',
     },
+  },
+} as const;
+
+const analysisJobRequestSchema = {
+  ...analysisRequestSchema,
+  properties: {
+    ...analysisRequestSchema.properties,
+    priority: { type: 'string', enum: ['normal', 'high'] },
   },
 } as const;
 

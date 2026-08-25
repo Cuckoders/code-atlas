@@ -47,6 +47,9 @@ button { color: inherit; }
 .path-form input::placeholder { color: #424a57; }
 .path-form button { border: 0; border-left: 1px solid #26332f; padding: 0 16px; background: rgba(126, 226, 197, .08); color: #92e6ce; font-size: 10px; font-weight: 700; cursor: pointer; }
 .path-form button:disabled { color: #49515e; cursor: default; }
+.path-form .path-form__priority { padding: 0 10px; color: #626c7b; background: transparent; }
+.path-form .path-form__priority.is-active { color: #f4cd72; background: rgba(244, 205, 114, .1); }
+.path-form .path-form__cancel { color: #efa5b6; background: rgba(235, 111, 131, .09); border-left-color: #4e2d36; }
 
 .view-switch { display: flex; margin-right: 18px; padding: 3px; border: 1px solid #242a34; border-radius: 7px; background: #0b0e14; }
 .view-switch button { width: 42px; height: 28px; border: 0; border-radius: 5px; background: transparent; color: #525c6c; font: 10px 'DM Mono'; }

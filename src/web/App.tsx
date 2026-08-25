@@ -12,6 +12,7 @@ import {
 } from '@xyflow/react';
 import type {
   AnalysisJob,
+  AnalysisJobPriority,
   AnalysisProgress,
   AnalysisJobStatus,
   AnalysisSnapshotSummary,
@@ -64,8 +65,10 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [jobStatus, setJobStatus] = useState<AnalysisJobStatus | null>(null);
   const [jobProgress, setJobProgress] = useState<AnalysisProgress | null>(null);
+  const [analysisPriority, setAnalysisPriority] = useState<AnalysisJobPriority>('normal');
   const [snapshots, setSnapshots] = useState<AnalysisSnapshotSummary[]>([]);
   const [activeSnapshotId, setActiveSnapshotId] = useState<string | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const activeRequest = useRef<AbortController | null>(null);
 
@@ -97,7 +100,11 @@ export function App() {
     setSnapshots(await response.json() as AnalysisSnapshotSummary[]);
   }, []);
 
-  const runBackgroundAnalysis = useCallback(async (path: string, compareRef?: string) => {
+  const runBackgroundAnalysis = useCallback(async (
+    path: string,
+    compareRef?: string,
+    priority: AnalysisJobPriority = 'normal',
+  ) => {
     activeRequest.current?.abort();
     const controller = new AbortController();
     activeRequest.current = controller;
@@ -105,17 +112,20 @@ export function App() {
     setJobStatus('queued');
     setJobProgress({ phase: 'scanning', processedFiles: 0, totalFiles: 0, percentage: 0 });
     setError(null);
+    let jobId: string | null = null;
     try {
       const createResponse = await fetch('/api/analysis-jobs', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ path, ...(compareRef ? { compareRef } : {}) }),
+        body: JSON.stringify({ path, priority, ...(compareRef ? { compareRef } : {}) }),
         signal: controller.signal,
       });
       const created = await createResponse.json() as AnalysisJob | { error: string };
       if (!createResponse.ok || 'error' in created) {
         throw new Error('error' in created ? created.error : 'Не удалось создать задание анализа.');
       }
+      jobId = created.id;
+      setActiveJobId(jobId);
       let job = created;
       while (job.status === 'queued' || job.status === 'running') {
         setJobStatus(job.status);
@@ -130,6 +140,7 @@ export function App() {
       }
       setJobStatus(job.status);
       setJobProgress(job.progress ?? null);
+      if (job.status === 'cancelled') return;
       if (job.status === 'failed' || !job.snapshotId) throw new Error(job.error ?? 'Анализ завершился с ошибкой.');
 
       const snapshotResponse = await fetch(`/api/snapshots/${job.snapshotId}`, { signal: controller.signal });
@@ -145,12 +156,31 @@ export function App() {
     } finally {
       if (activeRequest.current === controller) {
         activeRequest.current = null;
+        setActiveJobId((current) => current === jobId ? null : current);
         setJobStatus(null);
         setJobProgress(null);
         setLoading(false);
       }
     }
   }, [applyAnalysis, loadSnapshots]);
+
+  const cancelBackgroundAnalysis = useCallback(async () => {
+    const jobId = activeJobId;
+    if (!jobId) return;
+    try {
+      const response = await fetch(`/api/analysis-jobs/${jobId}`, { method: 'DELETE' });
+      const payload = await response.json() as AnalysisJob | { error: string };
+      if (!response.ok || 'error' in payload) {
+        throw new Error('error' in payload ? payload.error : 'Не удалось отменить анализ.');
+      }
+      if (payload.status === 'cancelled') {
+        setJobStatus('cancelled');
+        activeRequest.current?.abort();
+      }
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : 'Не удалось отменить анализ.');
+    }
+  }, [activeJobId]);
 
   const openSnapshot = useCallback(async (snapshotId: string) => {
     activeRequest.current?.abort();
@@ -209,7 +239,7 @@ export function App() {
   const handleAnalyze = (event: React.FormEvent) => {
     event.preventDefault();
     if (!projectPath.trim()) return;
-    void runBackgroundAnalysis(projectPath.trim());
+    void runBackgroundAnalysis(projectPath.trim(), undefined, analysisPriority);
   };
 
   const handleNodeClick = useCallback<NodeMouseHandler>((_event, flowNode) => {
@@ -290,13 +320,29 @@ export function App() {
             placeholder="Абсолютный путь к проекту"
             aria-label="Путь к проекту"
           />
-          <button type="submit" disabled={loading || !projectPath.trim()}>
-            {jobStatus === 'queued'
-              ? 'В очереди…'
-              : jobStatus === 'running'
-                ? `Индексируем${jobProgress ? ` · ${jobProgress.percentage}%` : '…'}`
-                : 'Построить карту'}
-          </button>
+          {jobStatus === 'queued' || jobStatus === 'running' ? (
+            <button
+              className="path-form__cancel"
+              type="button"
+              disabled={!activeJobId}
+              onClick={() => void cancelBackgroundAnalysis()}
+            >
+              Отменить{jobProgress ? ` · ${jobProgress.percentage}%` : ''}
+            </button>
+          ) : (
+            <>
+              <button
+                className={`path-form__priority ${analysisPriority === 'high' ? 'is-active' : ''}`}
+                type="button"
+                disabled={loading}
+                aria-pressed={analysisPriority === 'high'}
+                aria-label="Высокий приоритет анализа"
+                title="Высокий приоритет: задание обойдёт обычные задания в очереди"
+                onClick={() => setAnalysisPriority((current) => current === 'high' ? 'normal' : 'high')}
+              >⚡</button>
+              <button type="submit" disabled={loading || !projectPath.trim()}>Построить карту</button>
+            </>
+          )}
         </form>
         <div className="view-switch" aria-label="Режим карты">
           <button className={viewMode === '2d' ? 'is-active' : ''} type="button" onClick={() => changeViewMode('2d')}>2D</button>
