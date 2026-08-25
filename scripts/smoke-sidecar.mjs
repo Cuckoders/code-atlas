@@ -6,16 +6,16 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { sidecarFileName } from './desktop-platform.mjs';
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const outputDirectory = path.join(repositoryRoot, 'dist-sidecar');
 const manifest = JSON.parse(await fs.readFile(path.join(outputDirectory, 'build-manifest.json'), 'utf8'));
-const executableSuffix = process.platform === 'win32' ? '.exe' : '';
 const binaryPath = path.join(
   repositoryRoot,
   'src-tauri',
   'binaries',
-  `code-atlas-node-${manifest.targetTriple}${executableSuffix}`,
+  sidecarFileName(manifest.targetTriple),
 );
 const serverPath = path.join(outputDirectory, 'server.mjs');
 const workerPath = path.join(outputDirectory, 'analysis-worker.mjs');

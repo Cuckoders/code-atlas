@@ -15,8 +15,10 @@
     "serve": "npm run build && NODE_ENV=production npm start",
     "test": "vitest run",
     "test:sidecar": "node scripts/smoke-sidecar.mjs",
+    "test:windows-contract": "vitest run tests/desktop-platform.test.ts",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit"
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "verify:windows-bundle": "node scripts/verify-windows-bundle.mjs"
   },
   "engines": {
     "node": ">=22.5"

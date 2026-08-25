@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { assertNativeTarget, sidecarFileName } from './desktop-platform.mjs';
 
 const require = createRequire(import.meta.url);
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -58,13 +59,9 @@ await fs.cp(
 
 const hostTriple = readHostTriple();
 const targetTriple = process.env.TAURI_ENV_TARGET_TRIPLE?.trim() || hostTriple;
-if (!/^[A-Za-z0-9_.-]+$/.test(targetTriple)) throw new Error('Invalid Tauri target triple.');
-if (targetTriple !== hostTriple) {
-  throw new Error(`Cannot package the ${hostTriple} Node runtime for cross-target ${targetTriple}. Run this build on the target platform.`);
-}
+assertNativeTarget(hostTriple, targetTriple, process.platform);
 
-const executableSuffix = process.platform === 'win32' ? '.exe' : '';
-const sidecarPath = path.join(binariesDirectory, `code-atlas-node-${targetTriple}${executableSuffix}`);
+const sidecarPath = path.join(binariesDirectory, sidecarFileName(targetTriple));
 await fs.copyFile(process.execPath, sidecarPath, constants.COPYFILE_FICLONE);
 if (process.platform !== 'win32') await fs.chmod(sidecarPath, 0o755);
 

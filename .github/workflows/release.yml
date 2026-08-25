@@ -177,6 +177,10 @@ jobs:
         if: matrix.platform != 'macos'
         run: npm run desktop:build -- --bundles ${{ matrix.bundles }}
 
+      - name: Verify Windows executables and installers
+        if: matrix.platform == 'windows'
+        run: npm run verify:windows-bundle
+
       - name: Upload release candidates
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:

@@ -29,6 +29,31 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": "all",
+    "publisher": "Code Atlas",
+    "category": "DeveloperTool",
+    "shortDescription": "Interactive architecture and source-code map",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "wix": {
+        "language": "en-US",
+        "upgradeCode": "735c52ef-65e6-5ad8-bce1-dc39378bb201"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English", "Russian"]
+      }
+    }
   }
 }

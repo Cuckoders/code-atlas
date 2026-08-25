@@ -8,7 +8,7 @@
 - две 2D-раскладки: контейнеры по границам сервисов и архитектурные колонки Project → Services → Endpoints → Handlers → Domain → Data;
 - полноценная 3D-карта с orbit-навигацией, глубиной, перемещением узлов, фокусировкой камеры и общим инспектором;
 - импорт проекта по абсолютному локальному пути;
-- desktop-режим Tauri 2 с системным выбором папки проекта;
+- desktop-режим Tauri 2 для macOS, Windows x64 и Linux с системным выбором папки проекта;
 - автономный production-sidecar: Tauri запускает упакованный Node.js-анализатор, отдельный worker и SQLite без установленного у пользователя Node.js;
 - фоновая очередь анализа: API сразу возвращает идентификатор задания, а интерфейс показывает фазу, процент и число обработанных файлов;
 - управляемый пул до двух изолированных `worker_thread`: тяжёлый AST-разбор не блокирует HTTP API;
@@ -100,6 +100,17 @@ npm run desktop:build
 
 Команда собирает web-интерфейс, два backend-бандла, WASM-грамматики и копию Node runtime с суффиксом Rust target triple, после чего создаёт системные пакеты Tauri. На macOS результат находится в `src-tauri/target/release/bundle/macos/Code Atlas.app` и `src-tauri/target/release/bundle/dmg/`. Пользователю готового приложения Node.js и Rust не нужны.
 
+На Windows x64 сборку нужно выполнять нативно из PowerShell на Windows 10/11 с Node.js, Rust MSVC toolchain и Visual Studio Build Tools (`Desktop development with C++`):
+
+```powershell
+npm ci
+npm run test:windows-contract
+npm run desktop:build -- --bundles msi,nsis
+npm run verify:windows-bundle
+```
+
+Готовые установщики появятся в `src-tauri\target\release\bundle\msi\` и `src-tauri\target\release\bundle\nsis\`. Установленному приложению Node.js и Rust не нужны: Node runtime, анализатор, worker и WASM-грамматики находятся внутри пакета. NSIS устанавливается для текущего пользователя без обязательных прав администратора; при отсутствии Microsoft Edge WebView2 установщик тихо запускает официальный bootstrapper.
+
 Sidecar слушает случайный порт только на `127.0.0.1`. Tauri передаёт ему одноразовый 256-битный токен через окружение и хранит токен только в памяти окна; API отклоняет запросы без него. Shell-команды не открыты frontend-коду, sidecar автоматически завершается вместе с приложением, а SQLite лежит в системном app-data каталоге. `dist-sidecar/build-manifest.json` содержит SHA-256 и размер каждого runtime-ресурса. Сборка выполняется нативно для текущей платформы и намеренно отклоняет попытку вложить host Node runtime в чужой target triple.
 
 Локальный macOS-бандл без настроенного Developer ID подходит для разработки. Для внешнего распространения необходимо выполнить signing и notarization в release-пайплайне.
@@ -114,6 +125,7 @@ npm test
 npm run build
 npm run build:sidecar
 npm run test:sidecar
+npm run test:windows-contract
 ```
 
 ## Архитектура
