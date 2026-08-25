@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
   BLUEPRINT_PRESETS,
   createBlueprintFromPreset,
@@ -22,6 +22,10 @@ const CATEGORY_LABELS: Record<BlueprintPresetCategory | 'all', string> = {
 };
 
 const CATEGORY_ORDER: Array<BlueprintPresetCategory | 'all'> = ['all', 'architecture', 'creational', 'structural', 'behavioral'];
+const CATEGORY_COUNTS = Object.fromEntries(CATEGORY_ORDER.map((item) => [
+  item,
+  item === 'all' ? BLUEPRINT_PRESETS.length : BLUEPRINT_PRESETS.filter((preset) => preset.category === item).length,
+])) as Record<BlueprintPresetCategory | 'all', number>;
 
 export default function BlueprintPresetLibrary({ projectPath, onClose, onLoad }: BlueprintPresetLibraryProps) {
   const [category, setCategory] = useState<BlueprintPresetCategory | 'all'>('all');
@@ -35,6 +39,14 @@ export default function BlueprintPresetLibrary({ projectPath, onClose, onLoad }:
   const [selectedId, setSelectedId] = useState(BLUEPRINT_PRESETS[0].id);
   const selected = visiblePresets.find((preset) => preset.id === selectedId) ?? visiblePresets[0];
 
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
   const load = (mode: 'replace' | 'append') => {
     if (!selected) return;
     onLoad(createBlueprintFromPreset(selected, projectPath, () => crypto.randomUUID()), mode, selected);
@@ -46,30 +58,49 @@ export default function BlueprintPresetLibrary({ projectPath, onClose, onLoad }:
     }}>
       <section className="preset-library" role="dialog" aria-modal="true" aria-labelledby="preset-library-title">
         <header className="preset-library__header">
-          <div><span>Blueprint Library</span><h2 id="preset-library-title">Пресеты и паттерны</h2></div>
-          <label><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Strategy, DDD, события…" autoFocus /></label>
+          <div><span>Blueprint Library · {BLUEPRINT_PRESETS.length} шаблонов</span><h2 id="preset-library-title">Паттерны & архитектуры</h2></div>
+          <label>
+            <span aria-hidden="true">⌕</span>
+            <input
+              name="preset-search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Strategy, DDD, события…"
+              aria-label="Поиск паттернов и архитектур"
+              autoComplete="off"
+              spellCheck={false}
+              autoFocus
+            />
+          </label>
           <button type="button" className="preset-library__close" onClick={onClose} aria-label="Закрыть библиотеку">×</button>
         </header>
         <nav className="preset-library__tabs" aria-label="Категории пресетов">
           {CATEGORY_ORDER.map((item) => (
-            <button key={item} type="button" className={category === item ? 'is-active' : ''} onClick={() => setCategory(item)}>{CATEGORY_LABELS[item]}</button>
+            <button
+              key={item}
+              type="button"
+              className={category === item ? 'is-active' : ''}
+              aria-pressed={category === item}
+              onClick={() => setCategory(item)}
+            ><span>{CATEGORY_LABELS[item]}</span><i>{CATEGORY_COUNTS[item]}</i></button>
           ))}
+          <span className="preset-library__results" aria-live="polite">Показано: {visiblePresets.length} из {BLUEPRINT_PRESETS.length}</span>
         </nav>
         <div className="preset-library__body">
           <div className="preset-list">
             {visiblePresets.map((preset) => (
               <button key={preset.id} type="button" className={selected?.id === preset.id ? 'is-selected' : ''} onClick={() => setSelectedId(preset.id)}>
                 <PresetPreview preset={preset} compact />
-                <span><em>{CATEGORY_LABELS[preset.category]}</em><strong>{preset.title}</strong><small>{preset.description}</small><i>{preset.nodes.length} узлов · {preset.edges.length} связей</i></span>
+                <span><em>{CATEGORY_LABELS[preset.category]}{preset.tags.includes('GoF') ? ' · GoF' : ''}</em><strong>{preset.title}</strong><small>{preset.description}</small><i>{preset.nodes.length} узлов · {preset.edges.length} связей</i></span>
               </button>
             ))}
-            {visiblePresets.length === 0 ? <p className="preset-list__empty">По этому запросу пресетов нет.</p> : null}
+            {visiblePresets.length === 0 ? <p className="preset-list__empty">Ничего не найдено. Измените запрос или категорию.</p> : null}
           </div>
           <article className="preset-detail">
             {selected ? (
               <>
                 <div className="preset-detail__preview"><PresetPreview preset={selected} /></div>
-                <span>{CATEGORY_LABELS[selected.category]}</span>
+                <span>{CATEGORY_LABELS[selected.category]}{selected.tags.includes('GoF') ? ' · GoF' : ''}</span>
                 <h3>{selected.title}</h3>
                 <p>{selected.description}</p>
                 <div className="preset-detail__tags">{selected.tags.map((tag) => <i key={tag}>{tag}</i>)}</div>
@@ -92,7 +123,7 @@ function PresetPreview({ preset, compact = false }: { preset: BlueprintPreset; c
   const bounds = previewBounds(preset);
   const positions = new Map(preset.nodes.map((node) => [node.key, previewPosition(node.position, bounds)]));
   return (
-    <svg className={`preset-preview ${compact ? 'is-compact' : ''}`} viewBox="0 0 320 150" aria-label={`Preview: ${preset.title}`}>
+    <svg className={`preset-preview ${compact ? 'is-compact' : ''}`} viewBox="0 0 320 150" role="img" aria-label={`Схема: ${preset.title}`}>
       {preset.edges.map((edge, index) => {
         const source = positions.get(edge.source);
         const target = positions.get(edge.target);

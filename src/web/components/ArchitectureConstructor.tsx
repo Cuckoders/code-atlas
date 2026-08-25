@@ -97,7 +97,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
   const flowInstance = useRef<ReactFlowInstance<Node<BlueprintGraphNodeData>, Edge> | null>(null);
   const canvas = useRef<HTMLDivElement | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
-  const [showActual, setShowActual] = useState(true);
+  const [showActual, setShowActual] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('loading');
   const [message, setMessage] = useState('Загружаем blueprint…');
@@ -256,6 +256,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       ...(edge.label ? { label: edge.label } : {}),
     }));
     replaceDocument({ version: BLUEPRINT_VERSION, projectPath: analysis.summary.rootPath, nodes, edges });
+    setShowActual(false);
     setSelection(null);
     window.requestAnimationFrame(() => void flowInstance.current?.fitView({ padding: 0.2, duration: 300 }));
   }, [analysis, replaceDocument]);
@@ -267,6 +268,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
   ) => {
     if (mode === 'replace') {
       replaceDocument(presetDocument);
+      setShowActual(false);
     } else {
       const current = documentRef.current;
       if (current.nodes.length + presetDocument.nodes.length > MAX_BLUEPRINT_NODES
@@ -440,9 +442,15 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     <div className="architecture-constructor">
       <div className="blueprint-actionbar">
         <div className="blueprint-history">
-          <button type="button" disabled={history.current.past.length === 0} onClick={undo} title="Отменить (⌘Z)">↶</button>
-          <button type="button" disabled={history.current.future.length === 0} onClick={redo} title="Повторить (⇧⌘Z)">↷</button>
-          <button type="button" className="blueprint-presets" onClick={() => setPresetLibraryOpen(true)}>Пресеты</button>
+          <button type="button" className="blueprint-history-button" disabled={history.current.past.length === 0} onClick={undo} title="Отменить (⌘Z)" aria-label="Отменить изменение">↶</button>
+          <button type="button" className="blueprint-history-button" disabled={history.current.future.length === 0} onClick={redo} title="Повторить (⇧⌘Z)" aria-label="Повторить изменение">↷</button>
+          <button
+            type="button"
+            className="blueprint-presets"
+            onMouseEnter={() => void import('./BlueprintPresetLibrary')}
+            onFocus={() => void import('./BlueprintPresetLibrary')}
+            onClick={() => setPresetLibraryOpen(true)}
+          ><span aria-hidden="true">✦</span><strong>Паттерны & пресеты</strong></button>
           <button type="button" className="blueprint-import" onClick={importActual}>Импортировать факт</button>
         </div>
         <div className="blueprint-drift" aria-label="Архитектурный drift">
@@ -452,7 +460,10 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
         </div>
         <div className="blueprint-save">
           <span className={`blueprint-save__status is-${saveState}`}>{message}{updatedAt ? ` · ${formatTime(updatedAt)}` : ''}</span>
-          <label><input type="checkbox" checked={showActual} onChange={(event) => setShowActual(event.target.checked)} /> Факт</label>
+          <label className="blueprint-fact-toggle" title="Показать фактическую карту проекта как фоновый слой">
+            <input type="checkbox" checked={showActual} onChange={(event) => setShowActual(event.target.checked)} />
+            <span>Фоновый факт</span>
+          </label>
           <button type="button" disabled={!dirty || saveState === 'saving' || saveState === 'loading'} onClick={() => void save()}>
             {saveState === 'saving' ? 'Сохраняем…' : 'Сохранить'}
           </button>

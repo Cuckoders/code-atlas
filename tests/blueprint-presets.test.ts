@@ -18,6 +18,26 @@ describe('Blueprint presets', () => {
       new Set(['architecture', 'creational', 'structural', 'behavioral']),
     );
   });
+
+  it('contains the complete catalog of 23 GoF patterns', () => {
+    const gofIds = [
+      'abstract-factory', 'builder', 'factory-method', 'prototype', 'singleton',
+      'adapter', 'bridge', 'composite', 'decorator', 'facade', 'flyweight', 'proxy',
+      'chain-of-responsibility', 'command', 'interpreter', 'iterator', 'mediator', 'memento',
+      'observer', 'state', 'strategy', 'template-method', 'visitor',
+    ];
+    const availableIds = new Set(BLUEPRINT_PRESETS.map((preset) => preset.id));
+    const taggedGoFIds = new Set(BLUEPRINT_PRESETS.filter((preset) => preset.tags.includes('GoF')).map((preset) => preset.id));
+    expect(gofIds).toHaveLength(23);
+    expect(gofIds.every((id) => availableIds.has(id))).toBe(true);
+    expect(taggedGoFIds).toEqual(new Set(gofIds));
+  });
+
+  it('provides an expanded architecture catalog', () => {
+    expect(new Set(BLUEPRINT_PRESETS.map((preset) => preset.id)).size).toBe(BLUEPRINT_PRESETS.length);
+    expect(BLUEPRINT_PRESETS.filter((preset) => preset.category === 'architecture').length).toBeGreaterThanOrEqual(12);
+    expect(BLUEPRINT_PRESETS.length).toBeGreaterThanOrEqual(36);
+  });
 });
 
 function uuid(value: number): string {
