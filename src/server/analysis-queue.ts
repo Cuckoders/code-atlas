@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { AnalysisJob, ProjectAnalysis } from '../shared/graph.js';
-import { AnalysisError, analyzeProject } from './analyzer.js';
+import { AnalysisError, analyzeProject, type AnalyzeProjectOptions } from './analyzer.js';
 import type { SnapshotStore } from './snapshot-store.js';
 
 const MAX_RETAINED_JOBS = 100;
 
-type Analyze = (projectPath: string, options: { compareRef?: string }) => Promise<ProjectAnalysis>;
+type Analyze = (projectPath: string, options: AnalyzeProjectOptions) => Promise<ProjectAnalysis>;
 
 export class AnalysisQueue {
   private readonly jobs = new Map<string, AnalysisJob>();
@@ -62,7 +62,11 @@ export class AnalysisQueue {
       job.status = 'running';
       job.startedAt = new Date().toISOString();
       try {
-        const analysis = await this.analyze(job.projectPath, { compareRef: job.compareRef });
+        const analysis = await this.analyze(job.projectPath, {
+          compareRef: job.compareRef,
+          parseCache: this.snapshots,
+        });
+        this.snapshots.pruneParsedSources();
         const snapshot = this.snapshots.save(analysis, job.compareRef);
         job.status = 'completed';
         job.snapshotId = snapshot.id;

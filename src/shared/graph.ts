@@ -127,6 +127,11 @@ export interface ProjectSummary {
   git: GitSummary;
   durationMs: number;
   truncated: boolean;
+  incremental?: {
+    eligibleFiles: number;
+    reusedFiles: number;
+    parsedFiles: number;
+  };
 }
 
 export interface ProjectAnalysis {

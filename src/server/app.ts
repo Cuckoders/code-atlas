@@ -7,7 +7,7 @@ import rateLimit from '@fastify/rate-limit';
 import staticFiles from '@fastify/static';
 import type { ProjectAnalysis } from '../shared/graph.js';
 import { AnalysisQueue } from './analysis-queue.js';
-import { AnalysisError, analyzeProject } from './analyzer.js';
+import { AnalysisError, analyzeProject, type AnalyzeProjectOptions } from './analyzer.js';
 import { SnapshotStore } from './snapshot-store.js';
 
 interface CreateAppOptions {
@@ -15,7 +15,7 @@ interface CreateAppOptions {
   demoPath?: string;
   staticRoot?: string;
   databasePath?: string;
-  analyze?: (projectPath: string, options: { compareRef?: string }) => Promise<ProjectAnalysis>;
+  analyze?: (projectPath: string, options: AnalyzeProjectOptions) => Promise<ProjectAnalysis>;
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<FastifyInstance> {
@@ -60,7 +60,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     schema: {
       body: analysisRequestSchema,
     },
-  }, async (request) => analyzeProject(request.body.path, { compareRef: request.body.compareRef }));
+  }, async (request) => {
+    const analysis = await analyzeProject(request.body.path, {
+      compareRef: request.body.compareRef,
+      parseCache: snapshots,
+    });
+    snapshots.pruneParsedSources();
+    return analysis;
+  });
 
   app.post<{ Body: { path: string; compareRef?: string } }>('/api/analysis-jobs', {
     config: {

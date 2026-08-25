@@ -9,6 +9,7 @@
 - импорт проекта по абсолютному локальному пути;
 - фоновая очередь анализа: API сразу возвращает идентификатор задания, а интерфейс показывает состояния очереди и индексирования;
 - сохранение до 50 последних снимков в локальную SQLite-базу и повторное открытие карты без сканирования проекта;
+- инкрементальный SHA-256-кэш AST: неизменённые файлы не парсятся повторно, а доля переиспользования показывается в боковой панели;
 - поиск и фильтры слоев;
 - сервисы по manifest-файлам (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, Maven/Gradle и другие);
 - языковая статистика для TypeScript/JavaScript, Python, Java/Kotlin, Go, Rust, C#, PHP, Ruby, Swift, Dart и web-файлов;
@@ -66,14 +67,14 @@ Browser / React Flow
         ▼
 Fastify local API ──► background queue ──► static analyzer
                                                │
-                      SQLite snapshots ◄── normalized graph ──┬─► 2D renderer
-                                               │              └─► lazy 3D renderer
+               SQLite snapshots + AST cache ◄── normalized graph ──┬─► 2D renderer
+                                               │                    └─► lazy 3D renderer
                                                ├─ manifests
                                                ├─ source parsers
                                                └─ infra detectors
 ```
 
-Сервер слушает только `127.0.0.1`, не запускает код анализируемого проекта и не переходит по симлинкам. По умолчанию снимки лежат в `.code-atlas/code-atlas.sqlite`; путь можно переопределить переменной `CODE_ATLAS_DATABASE`.
+Сервер слушает только `127.0.0.1`, не запускает код анализируемого проекта и не переходит по симлинкам. По умолчанию снимки и кэш лежат в `.code-atlas/code-atlas.sqlite`; путь можно переопределить переменной `CODE_ATLAS_DATABASE`. Кэш ограничен 15 000 результатами парсинга, валидируется при чтении и автоматически инвалидируется при смене версии парсера.
 
 Фоновый API:
 
@@ -86,5 +87,5 @@ Fastify local API ──► background queue ──► static analyzer
 
 1. Семантический call graph через language servers для Java, Go, Rust, C# и PHP.
 2. Kotlin Tree-sitter WASM-адаптер.
-3. Инкрементальное переиндексирование только изменившихся файлов.
+3. Изолированный worker thread и прогресс анализа по файлам для очень больших монорепозиториев.
 4. Desktop-оболочка Tauri для системного выбора папки.

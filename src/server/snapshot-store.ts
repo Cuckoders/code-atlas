@@ -3,8 +3,16 @@ import { chmodSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { AnalysisSnapshotSummary, ProjectAnalysis, StoredAnalysisSnapshot } from '../shared/graph.js';
+import {
+  MAX_PARSE_CACHE_JSON_SIZE,
+  PARSER_CACHE_VERSION,
+  parseCachedSource,
+  type ParseCache,
+} from './parse-cache.js';
+import type { ParsedSource } from './tree-sitter-parser.js';
 
 const MAX_SNAPSHOTS = 50;
+const MAX_PARSED_FILES = 15_000;
 
 interface SnapshotRow {
   id: string;
@@ -19,7 +27,7 @@ interface SnapshotRow {
   analysis_json?: string;
 }
 
-export class SnapshotStore {
+export class SnapshotStore implements ParseCache {
   readonly databasePath: string;
   private readonly database: DatabaseSync;
 
@@ -45,7 +53,64 @@ export class SnapshotStore {
       );
       CREATE INDEX IF NOT EXISTS analysis_snapshots_created_at
         ON analysis_snapshots(created_at DESC);
+      CREATE TABLE IF NOT EXISTS parsed_sources (
+        project_path TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        parser_version INTEGER NOT NULL,
+        parsed_json TEXT NOT NULL,
+        last_used_at TEXT NOT NULL,
+        PRIMARY KEY (project_path, relative_path, content_hash, parser_version)
+      );
+      CREATE INDEX IF NOT EXISTS parsed_sources_last_used_at
+        ON parsed_sources(last_used_at DESC);
     `);
+  }
+
+  getParsedSource(projectPath: string, relativePath: string, contentHash: string): ParsedSource | null {
+    const row = this.database.prepare(`
+      SELECT parsed_json
+      FROM parsed_sources
+      WHERE project_path = ? AND relative_path = ? AND content_hash = ? AND parser_version = ?
+    `).get(projectPath, relativePath, contentHash, PARSER_CACHE_VERSION) as { parsed_json?: unknown } | undefined;
+    if (typeof row?.parsed_json !== 'string') return null;
+    const parsed = parseCachedSource(row.parsed_json);
+    if (!parsed) return null;
+    this.database.prepare(`
+      UPDATE parsed_sources SET last_used_at = ?
+      WHERE project_path = ? AND relative_path = ? AND content_hash = ? AND parser_version = ?
+    `).run(new Date().toISOString(), projectPath, relativePath, contentHash, PARSER_CACHE_VERSION);
+    return parsed;
+  }
+
+  setParsedSource(projectPath: string, relativePath: string, contentHash: string, parsed: ParsedSource): void {
+    const serialized = JSON.stringify(parsed);
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_PARSE_CACHE_JSON_SIZE) return;
+    this.database.prepare(`
+      INSERT INTO parsed_sources (
+        project_path, relative_path, content_hash, parser_version, parsed_json, last_used_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_path, relative_path, content_hash, parser_version)
+      DO UPDATE SET parsed_json = excluded.parsed_json, last_used_at = excluded.last_used_at
+    `).run(
+      projectPath,
+      relativePath,
+      contentHash,
+      PARSER_CACHE_VERSION,
+      serialized,
+      new Date().toISOString(),
+    );
+  }
+
+  pruneParsedSources(): void {
+    this.database.prepare(`
+      DELETE FROM parsed_sources
+      WHERE rowid IN (
+        SELECT rowid FROM parsed_sources
+        ORDER BY last_used_at DESC, rowid DESC
+        LIMIT -1 OFFSET ?
+      )
+    `).run(MAX_PARSED_FILES);
   }
 
   save(analysis: ProjectAnalysis, compareRef?: string): AnalysisSnapshotSummary {

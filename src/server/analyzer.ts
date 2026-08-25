@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
@@ -20,6 +21,7 @@ import {
   type GitAnalysis,
   type GitFileHistory,
 } from './git-analyzer.js';
+import type { ParseCache } from './parse-cache.js';
 import { parseWithTreeSitter, type ParsedSource } from './tree-sitter-parser.js';
 
 const MAX_FILES = 1_500;
@@ -104,6 +106,7 @@ export class AnalysisError extends Error {
 
 export interface AnalyzeProjectOptions {
   compareRef?: string;
+  parseCache?: ParseCache;
 }
 
 export async function analyzeProject(inputPath: string, options: AnalyzeProjectOptions = {}): Promise<ProjectAnalysis> {
@@ -136,6 +139,7 @@ export async function analyzeProject(inputPath: string, options: AnalyzeProjectO
     services,
     gitAnalysis,
     startedAt,
+    options.parseCache,
   );
   if (!options.compareRef) return analysis;
 
@@ -158,6 +162,7 @@ export async function analyzeProject(inputPath: string, options: AnalyzeProjectO
     baseServices,
     emptyGitAnalysis(),
     performance.now(),
+    options.parseCache,
   );
   if (snapshot.truncated) {
     analysis.warnings.push('Исторический Git-снимок ограничен: архитектурный diff может быть частичным.');
@@ -175,6 +180,7 @@ async function buildProjectAnalysis(
   services: ServiceInfo[],
   gitAnalysis: GitAnalysis,
   startedAt: number,
+  parseCache?: ParseCache,
 ): Promise<ProjectAnalysis> {
   const projectName = path.basename(rootPath);
   const projectId = 'project:root';
@@ -222,6 +228,8 @@ async function buildProjectAnalysis(
   const pendingImports: PendingImport[] = [];
   const pendingCalls: PendingCall[] = [];
   let symbolCount = 0;
+  let reusedFiles = 0;
+  let parsedFiles = 0;
 
   for (const file of sourceFiles) {
     const extension = path.extname(file.relativePath).toLowerCase();
@@ -235,7 +243,17 @@ async function buildProjectAnalysis(
     const moduleId = `module:${file.relativePath}`;
     const owner = findOwningService(file.relativePath, services);
     moduleIds.set(normalizeModulePath(file.relativePath), moduleId);
-    const parsed = await parseSource(file.relativePath, content);
+    const contentHash = parseCache ? sourceHash(content) : undefined;
+    const cached = parseCache && contentHash
+      ? parseCache.getParsedSource(rootPath, file.relativePath, contentHash)
+      : null;
+    const parsed = cached ?? await parseSource(file.relativePath, content);
+    if (cached) {
+      reusedFiles += 1;
+    } else {
+      parsedFiles += 1;
+      if (parseCache && contentHash) parseCache.setParsedSource(rootPath, file.relativePath, contentHash, parsed);
+    }
     const moduleInfo: ModuleInfo = {
       id: moduleId,
       relativePath: file.relativePath,
@@ -356,12 +374,21 @@ async function buildProjectAnalysis(
       git: gitAnalysis.summary,
       durationMs: Math.round(performance.now() - startedAt),
       truncated,
+      incremental: {
+        eligibleFiles: reusedFiles + parsedFiles,
+        reusedFiles,
+        parsedFiles,
+      },
     },
     nodes: finalNodes,
     edges: finalEdges,
     diagnostics,
     warnings,
   };
+}
+
+function sourceHash(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
 }
 
 function gitMetadata(history: GitFileHistory | undefined): AtlasNode['metadata'] {

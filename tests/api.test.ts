@@ -67,6 +67,19 @@ describe('API', () => {
       snapshot: expect.objectContaining({ id: completed.snapshotId }),
       analysis: expect.objectContaining({ nodes: expect.any(Array), edges: expect.any(Array) }),
     }));
+
+    const warmResponse = await app.inject({
+      method: 'POST',
+      url: '/api/analysis-jobs',
+      payload: { path: fixturePath },
+    });
+    const warmJob = await waitForJob(app, warmResponse.json<AnalysisJob>().id);
+    const warmSnapshot = await app.inject({ method: 'GET', url: `/api/snapshots/${warmJob.snapshotId}` });
+    expect(warmSnapshot.json<StoredAnalysisSnapshot>().analysis.summary.incremental).toEqual({
+      eligibleFiles: 4,
+      reusedFiles: 4,
+      parsedFiles: 0,
+    });
   });
 
   it('validates job identifiers before looking them up', async () => {

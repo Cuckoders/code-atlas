@@ -182,6 +182,9 @@ export function ProjectSidebar({
       <footer>
         <span className="status-dot" />
         Снимок за {summary.durationMs} мс
+        {summary.incremental && summary.incremental.eligibleFiles > 0
+          ? ` · кэш ${summary.incremental.reusedFiles}/${summary.incremental.eligibleFiles}`
+          : ''}
       </footer>
     </aside>
   );
