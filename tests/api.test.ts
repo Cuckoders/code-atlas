@@ -32,6 +32,45 @@ describe('API', () => {
     expect(response.statusCode).toBe(400);
   });
 
+  it('protects a desktop sidecar session with an in-memory token', async () => {
+    const token = 'a'.repeat(64);
+    app = await createApp({ logger: false, databasePath: ':memory:', apiToken: token });
+
+    const missing = await app.inject({ method: 'GET', url: '/api/health' });
+    const invalid = await app.inject({
+      method: 'GET',
+      url: '/api/health',
+      headers: { 'x-code-atlas-token': 'b'.repeat(64) },
+    });
+    const valid = await app.inject({
+      method: 'GET',
+      url: '/api/health',
+      headers: { 'x-code-atlas-token': token },
+    });
+
+    expect(missing.statusCode).toBe(401);
+    expect(invalid.statusCode).toBe(401);
+    expect(valid.statusCode).toBe(200);
+    expect(valid.json()).toEqual({ status: 'ok' });
+  });
+
+  it('allows only the desktop token header in Tauri CORS preflight', async () => {
+    app = await createApp({ logger: false, databasePath: ':memory:', apiToken: 'a'.repeat(64) });
+    const response = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/health',
+      headers: {
+        origin: 'tauri://localhost',
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'x-code-atlas-token',
+      },
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers['access-control-allow-origin']).toBe('tauri://localhost');
+    expect(response.headers['access-control-allow-headers']).toBe('content-type, x-code-atlas-token');
+  });
+
   it('rejects unsafe Git references', async () => {
     app = await createApp({ logger: false, databasePath: ':memory:' });
     const response = await app.inject({

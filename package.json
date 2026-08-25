@@ -7,10 +7,13 @@
   "scripts": {
     "dev": "concurrently -k -n api,web -c cyan,magenta \"tsx watch src/server/index.ts\" \"vite\"",
     "desktop:dev": "node scripts/run-tauri.mjs dev",
+    "desktop:build": "node scripts/run-tauri.mjs build --config src-tauri/tauri.prod.conf.json",
     "build": "tsc -p tsconfig.server.json && vite build",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
     "start": "node dist-server/server/index.js",
     "serve": "npm run build && NODE_ENV=production npm start",
     "test": "vitest run",
+    "test:sidecar": "node scripts/smoke-sidecar.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit"
   },
@@ -43,6 +46,7 @@
     "@types/three": "^0.185.4",
     "@vitejs/plugin-react": "^6.1.0",
     "concurrently": "^10.0.5",
+    "esbuild": "0.28.2",
     "tsx": "^4.23.12",
     "typescript": "^5.9.3",
     "vite": "^8.2.2",

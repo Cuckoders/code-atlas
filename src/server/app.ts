@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -17,6 +18,7 @@ interface CreateAppOptions {
   databasePath?: string;
   analyze?: (projectPath: string, options: AnalyzeProjectOptions) => Promise<ProjectAnalysis>;
   analysisConcurrency?: number;
+  apiToken?: string;
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<FastifyInstance> {
@@ -26,10 +28,26 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   });
 
   await app.register(cors, {
-    origin: /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/,
+    origin: /^(?:https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?|tauri:\/\/localhost|https?:\/\/tauri\.localhost)$/,
+    allowedHeaders: ['content-type', 'x-code-atlas-token'],
+    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, { global: false });
+
+  if (options.apiToken) {
+    const expectedToken = Buffer.from(options.apiToken);
+    app.addHook('onRequest', async (request, reply) => {
+      if (request.method === 'OPTIONS') return;
+      const tokenHeader = request.headers['x-code-atlas-token'];
+      const providedToken = typeof tokenHeader === 'string' ? Buffer.from(tokenHeader) : null;
+      if (!providedToken
+        || providedToken.byteLength !== expectedToken.byteLength
+        || !timingSafeEqual(providedToken, expectedToken)) {
+        return reply.status(401).send({ error: 'Недействительный токен desktop-сессии.' });
+      }
+    });
+  }
 
   const defaultDatabasePath = path.resolve(process.cwd(), '.code-atlas/code-atlas.sqlite');
   const snapshots = new SnapshotStore(options.databasePath ?? process.env.CODE_ATLAS_DATABASE ?? defaultDatabasePath);

@@ -2,6 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-project-picker",
   "description": "The main window may open the native project-directory picker and has no shell or filesystem plugin access.",
+  "local": true,
   "windows": ["main"],
   "permissions": [
     "core:default",

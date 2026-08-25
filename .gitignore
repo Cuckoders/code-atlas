@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-server/
+dist-sidecar/
 .DS_Store
 *.log
 .env
@@ -11,3 +12,4 @@ output/playwright/
 .code-atlas/
 src-tauri/target/
 src-tauri/gen/
+src-tauri/binaries/

@@ -26,7 +26,7 @@ import type {
 import { AtlasGraphNode, type AtlasGraphNodeData } from './components/AtlasGraphNode';
 import { Inspector } from './components/Inspector';
 import { ProjectSidebar } from './components/ProjectSidebar';
-import { chooseProjectDirectory, hasNativeDirectoryPicker } from './desktop';
+import { apiFetch, chooseProjectDirectory, hasNativeDirectoryPicker } from './desktop';
 
 const nodeTypes = { atlas: AtlasGraphNode };
 const Graph3D = lazy(() => import('./components/Graph3D'));
@@ -85,7 +85,7 @@ export function App() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(url, init);
+      const response = await apiFetch(url, init);
       const payload = await response.json() as ProjectAnalysis | { error: string };
       if (!response.ok || 'error' in payload) throw new Error('error' in payload ? payload.error : 'Ошибка анализа');
       applyAnalysis(payload);
@@ -97,7 +97,7 @@ export function App() {
   }, [applyAnalysis]);
 
   const loadSnapshots = useCallback(async () => {
-    const response = await fetch('/api/snapshots?limit=8');
+    const response = await apiFetch('/api/snapshots?limit=8');
     if (!response.ok) throw new Error('Не удалось загрузить список снимков.');
     setSnapshots(await response.json() as AnalysisSnapshotSummary[]);
   }, []);
@@ -116,7 +116,7 @@ export function App() {
     setError(null);
     let jobId: string | null = null;
     try {
-      const createResponse = await fetch('/api/analysis-jobs', {
+      const createResponse = await apiFetch('/api/analysis-jobs', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path, priority, ...(compareRef ? { compareRef } : {}) }),
@@ -133,7 +133,7 @@ export function App() {
         setJobStatus(job.status);
         setJobProgress(job.progress ?? null);
         await abortableDelay(300, controller.signal);
-        const statusResponse = await fetch(`/api/analysis-jobs/${job.id}`, { signal: controller.signal });
+        const statusResponse = await apiFetch(`/api/analysis-jobs/${job.id}`, { signal: controller.signal });
         const statusPayload = await statusResponse.json() as AnalysisJob | { error: string };
         if (!statusResponse.ok || 'error' in statusPayload) {
           throw new Error('error' in statusPayload ? statusPayload.error : 'Не удалось получить статус задания.');
@@ -145,7 +145,7 @@ export function App() {
       if (job.status === 'cancelled') return;
       if (job.status === 'failed' || !job.snapshotId) throw new Error(job.error ?? 'Анализ завершился с ошибкой.');
 
-      const snapshotResponse = await fetch(`/api/snapshots/${job.snapshotId}`, { signal: controller.signal });
+      const snapshotResponse = await apiFetch(`/api/snapshots/${job.snapshotId}`, { signal: controller.signal });
       const stored = await snapshotResponse.json() as StoredAnalysisSnapshot | { error: string };
       if (!snapshotResponse.ok || 'error' in stored) {
         throw new Error('error' in stored ? stored.error : 'Не удалось открыть готовый снимок.');
@@ -170,7 +170,7 @@ export function App() {
     const jobId = activeJobId;
     if (!jobId) return;
     try {
-      const response = await fetch(`/api/analysis-jobs/${jobId}`, { method: 'DELETE' });
+      const response = await apiFetch(`/api/analysis-jobs/${jobId}`, { method: 'DELETE' });
       const payload = await response.json() as AnalysisJob | { error: string };
       if (!response.ok || 'error' in payload) {
         throw new Error('error' in payload ? payload.error : 'Не удалось отменить анализ.');
@@ -191,7 +191,7 @@ export function App() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/snapshots/${snapshotId}`, { signal: controller.signal });
+      const response = await apiFetch(`/api/snapshots/${snapshotId}`, { signal: controller.signal });
       const payload = await response.json() as StoredAnalysisSnapshot | { error: string };
       if (!response.ok || 'error' in payload) throw new Error('error' in payload ? payload.error : 'Не удалось открыть снимок.');
       applyAnalysis(payload.analysis, payload.snapshot.id);

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import type { AnalysisProgress, ProjectAnalysis } from '../shared/graph.js';
 import { AnalysisError } from './analyzer.js';
@@ -27,8 +28,14 @@ export function runAnalysisWorker(
 ): Promise<ProjectAnalysis> {
   if (signal?.aborted) return Promise.reject(new AnalysisWorkerCancelledError());
   const expectedProjectPath = path.resolve(projectPath.trim());
-  const sourceMode = import.meta.url.endsWith('.ts');
-  const workerUrl = new URL(sourceMode ? './analysis-worker.ts' : './analysis-worker.js', import.meta.url);
+  const configuredWorkerPath = process.env.CODE_ATLAS_WORKER_PATH;
+  if (configuredWorkerPath && !path.isAbsolute(configuredWorkerPath)) {
+    return Promise.reject(new Error('CODE_ATLAS_WORKER_PATH must be absolute'));
+  }
+  const sourceMode = !configuredWorkerPath && import.meta.url.endsWith('.ts');
+  const workerUrl = configuredWorkerPath
+    ? pathToFileURL(configuredWorkerPath)
+    : new URL(sourceMode ? './analysis-worker.ts' : './analysis-worker.js', import.meta.url);
   const worker = new Worker(workerUrl, {
     name: 'code-atlas-analyzer',
     workerData: { projectPath, ...(compareRef ? { compareRef } : {}) } satisfies AnalysisWorkerData,

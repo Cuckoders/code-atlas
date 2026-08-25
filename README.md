@@ -8,6 +8,7 @@
 - полноценная 3D-карта с orbit-навигацией, глубиной, перемещением узлов, фокусировкой камеры и общим инспектором;
 - импорт проекта по абсолютному локальному пути;
 - desktop-режим Tauri 2 с системным выбором папки проекта;
+- автономный production-sidecar: Tauri запускает упакованный Node.js-анализатор, отдельный worker и SQLite без установленного у пользователя Node.js;
 - фоновая очередь анализа: API сразу возвращает идентификатор задания, а интерфейс показывает фазу, процент и число обработанных файлов;
 - управляемый пул до двух изолированных `worker_thread`: тяжёлый AST-разбор не блокирует HTTP API;
 - отмена ожидающего или активного анализа и высокий приоритет, который перемещает задание перед обычными заданиями без прерывания уже запущенной работы;
@@ -65,7 +66,17 @@ npm run desktop:dev
 
 Откроется отдельное desktop-окно. В нём рядом с полем пути доступна кнопка «Папка», которая вызывает системный выбор каталога. Оболочка имеет только разрешение на открытие этого диалога: доступ к shell и filesystem-плагину ей не выдан.
 
-На текущем этапе это development-оболочка: команда поднимает локальные Fastify и Vite вместе с Tauri. Production-бандл с упакованным Node.js-анализатором ещё не готов; для него backend будет оформлен как отдельный проверяемый sidecar для каждой целевой платформы.
+Для автономной сборки под текущую платформу:
+
+```bash
+npm run desktop:build
+```
+
+Команда собирает web-интерфейс, два backend-бандла, WASM-грамматики и копию Node runtime с суффиксом Rust target triple, после чего создаёт системные пакеты Tauri. На macOS результат находится в `src-tauri/target/release/bundle/macos/Code Atlas.app` и `src-tauri/target/release/bundle/dmg/`. Пользователю готового приложения Node.js и Rust не нужны.
+
+Sidecar слушает случайный порт только на `127.0.0.1`. Tauri передаёт ему одноразовый 256-битный токен через окружение и хранит токен только в памяти окна; API отклоняет запросы без него. Shell-команды не открыты frontend-коду, sidecar автоматически завершается вместе с приложением, а SQLite лежит в системном app-data каталоге. `dist-sidecar/build-manifest.json` содержит SHA-256 и размер каждого runtime-ресурса. Сборка выполняется нативно для текущей платформы и намеренно отклоняет попытку вложить host Node runtime в чужой target triple.
+
+Локальный macOS-бандл без настроенного Developer ID подходит для разработки. Для внешнего распространения необходимо выполнить signing и notarization в release-пайплайне.
 
 ## Проверка
 
@@ -73,15 +84,17 @@ npm run desktop:dev
 npm run typecheck
 npm test
 npm run build
+npm run build:sidecar
+npm run test:sidecar
 ```
 
 ## Архитектура
 
 ```text
-Browser / React Flow
+Browser / Tauri WebView / React Flow
         │  POST job · poll progress · open snapshot
         ▼
-Fastify local API ──► priority queue ──► worker pool (max 2)
+token-protected Fastify loopback API ──► priority queue ──► worker pool (max 2)
         │                         ▲                 │
         │                         └── progress ─────┤
         └── SQLite snapshots + AST cache ◄── IPC ──┤
@@ -107,6 +120,6 @@ Fastify local API ──► priority queue ──► worker pool (max 2)
 
 ## Следующий этап
 
-1. Production-sidecar с Node.js-анализатором и воспроизводимой упаковкой под macOS, Windows и Linux.
+1. Native release matrix для macOS, Windows и Linux: signing, notarization, CI-артефакты и автообновление.
 2. Опциональный sandboxed LSP-режим с явным согласием пользователя для более точного разрешения динамических вызовов.
 3. Swift Tree-sitter WASM-адаптер.

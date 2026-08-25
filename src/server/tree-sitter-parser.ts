@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { createRequire } from 'node:module';
+import path from 'node:path';
 import {
   KOTLIN_GRAMMAR,
   KOTLIN_GRAMMAR_WASM_SPECIFIER,
@@ -50,7 +51,13 @@ const GRAMMARS: Record<string, GrammarConfig> = {
 };
 
 const require = createRequire(import.meta.url);
-const coreWasmPath = require.resolve('web-tree-sitter/web-tree-sitter.wasm');
+const configuredWasmDirectory = process.env.CODE_ATLAS_WASM_DIR;
+if (configuredWasmDirectory && !path.isAbsolute(configuredWasmDirectory)) {
+  throw new Error('CODE_ATLAS_WASM_DIR must be absolute');
+}
+const coreWasmPath = configuredWasmDirectory
+  ? path.join(configuredWasmDirectory, 'web-tree-sitter.wasm')
+  : require.resolve('web-tree-sitter/web-tree-sitter.wasm');
 let parserInitialization: Promise<void> | undefined;
 const languageCache = new Map<string, Promise<Language>>();
 
@@ -113,7 +120,9 @@ function loadLanguage(grammar: GrammarConfig): Promise<Language> {
 }
 
 async function loadVerifiedLanguage(grammar: GrammarConfig): Promise<Language> {
-  const wasmPath = require.resolve(grammar.wasm);
+  const wasmPath = configuredWasmDirectory
+    ? path.join(configuredWasmDirectory, `tree-sitter-${grammar.name}.wasm`)
+    : require.resolve(grammar.wasm);
   if (!grammar.sha256) return Language.load(wasmPath);
   const bytes = await fs.readFile(wasmPath);
   const digest = createHash('sha256').update(bytes).digest('hex');
