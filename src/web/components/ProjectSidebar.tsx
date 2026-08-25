@@ -1,10 +1,8 @@
 import { useState, type FormEvent } from 'react';
-import type { AnalysisSnapshotSummary, ProjectDiagnostic, ProjectSummary } from '../../shared/graph';
+import type { AnalysisSnapshotSummary, ProjectSummary } from '../../shared/graph';
 
 interface ProjectSidebarProps {
   summary: ProjectSummary;
-  diagnostics: ProjectDiagnostic[];
-  onSelectDiagnostic: (diagnostic: ProjectDiagnostic) => void;
   onCompare: (reference: string) => void;
   snapshots: AnalysisSnapshotSummary[];
   activeSnapshotId: string | null;
@@ -21,8 +19,6 @@ const SNAPSHOT_DATE = new Intl.DateTimeFormat('ru', {
 
 export function ProjectSidebar({
   summary,
-  diagnostics,
-  onSelectDiagnostic,
   onCompare,
   snapshots,
   activeSnapshotId,
@@ -127,27 +123,6 @@ export function ProjectSidebar({
             ) : null}
           </>
         ) : <p className="diagnostic-empty">Git-репозиторий не найден</p>}
-      </section>
-
-      <section className="sidebar-section diagnostics-section">
-        <div className="section-heading"><h2>Диагностика</h2><span>{diagnostics.length}</span></div>
-        {diagnostics.length ? (
-          <div className="diagnostic-list">
-            {diagnostics.slice(0, 6).map((diagnostic) => (
-              <button
-                type="button"
-                className={`diagnostic diagnostic--${diagnostic.severity}`}
-                key={diagnostic.id}
-                onClick={() => onSelectDiagnostic(diagnostic)}
-                title={diagnostic.message}
-              >
-                <i />
-                <span><strong>{diagnostic.title}</strong><small>{diagnostic.message}</small></span>
-              </button>
-            ))}
-            {diagnostics.length > 6 ? <p className="diagnostic-more">Ещё {diagnostics.length - 6}</p> : null}
-          </div>
-        ) : <p className="diagnostic-empty">Явных архитектурных рисков не найдено</p>}
       </section>
 
       <footer>

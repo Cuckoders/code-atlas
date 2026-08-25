@@ -29,6 +29,7 @@ import type {
 } from '../shared/graph';
 import type { RequestTrace } from '../shared/request-trace';
 import { AtlasGraphNode, type AtlasGraphNodeData } from './components/AtlasGraphNode';
+import { DiagnosticsMenu } from './components/DiagnosticsMenu';
 import { GraphZoneNode, type GraphZoneNodeData } from './components/GraphZoneNode';
 import { Inspector } from './components/Inspector';
 import { MapFilters } from './components/MapFilters';
@@ -503,8 +504,6 @@ export function App() {
 
       <ProjectSidebar
         summary={analysis.summary}
-        diagnostics={analysis.diagnostics}
-        onSelectDiagnostic={selectDiagnostic}
         onCompare={compareWithGitReference}
         snapshots={snapshots}
         activeSnapshotId={activeSnapshotId}
@@ -573,6 +572,7 @@ export function App() {
             ) : null}
             {workspaceMode === 'map' ? (
               <>
+                <DiagnosticsMenu diagnostics={analysis.diagnostics} onSelect={selectDiagnostic} />
                 <MapFilters visibleKinds={visibleKinds} onChange={setVisibleKinds} />
                 <button
                   type="button"
