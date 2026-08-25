@@ -45,6 +45,8 @@ import {
 
 const nodeTypes = { blueprint: BlueprintGraphNode };
 const BlueprintPresetLibrary = lazy(() => import('./BlueprintPresetLibrary'));
+const BLUEPRINT_NODE_WIDTH = 210;
+const BLUEPRINT_NODE_HEIGHT = 64;
 const PALETTE_KINDS: BlueprintNodeKind[] = [
   'system', 'service', 'frontend', 'gateway', 'controller', 'module',
   'component', 'class', 'abstract-class', 'interface', 'database', 'cache', 'queue', 'external',
@@ -321,6 +323,8 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       id: node.id,
       type: 'blueprint',
       position: node.position,
+      width: BLUEPRINT_NODE_WIDTH,
+      height: BLUEPRINT_NODE_HEIGHT,
       selected: selection?.type === 'node' && selection.id === node.id,
       data: {
         label: node.label,
@@ -335,6 +339,8 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       id: `actual:${node.id}`,
       type: 'blueprint',
       position: actualLayout.positions.get(node.id) ?? { x: 0, y: 0 },
+      width: BLUEPRINT_NODE_WIDTH,
+      height: BLUEPRINT_NODE_HEIGHT,
       selected: selection?.type === 'actual' && selection.id === node.id,
       draggable: false,
       connectable: false,
@@ -358,6 +364,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       label: edge.label || EDGE_LABELS[edge.kind],
       type: 'smoothstep',
       selected: selection?.type === 'edge' && selection.id === edge.id,
+      reconnectable: true,
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
       style: {
         stroke: edgeColor(edge.kind),
@@ -377,6 +384,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
         target: `actual:${edge.target}`,
         type: 'smoothstep',
         selectable: false,
+        reconnectable: false,
         markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
         style: { stroke: '#7a4b54', strokeWidth: 1, strokeDasharray: '4 5', opacity: 0.46 },
       }));
@@ -408,6 +416,19 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     };
     commit((current) => ({ ...current, edges: [...current.edges, edge] }));
     setSelection({ type: 'edge', id: edge.id });
+  }, [commit]);
+
+  const onReconnect = useCallback((oldEdge: Edge, connection: Connection) => {
+    const { source, target } = connection;
+    if (!source || !target || source === target
+      || source.startsWith('actual:') || target.startsWith('actual:')) return;
+    commit((current) => ({
+      ...current,
+      edges: current.edges.map((edge) => edge.id === oldEdge.id
+        ? { ...edge, source, target }
+        : edge),
+    }));
+    setSelection({ type: 'edge', id: oldEdge.id });
   }, [commit]);
 
   useEffect(() => {
@@ -488,7 +509,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
             </button>
           ))}
         </div>
-        <p>Соедините узлы, потянув за точку справа к точке слева.</p>
+        <p>Создайте связь от правой точки к левой. Чтобы изменить стрелку, выберите её и перетащите нужный конец.</p>
       </aside>
 
       <div
@@ -523,6 +544,10 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
             setHistoryVersion((value) => value + 1);
           }}
           onConnect={onConnect}
+          onReconnect={onReconnect}
+          connectionRadius={28}
+          reconnectRadius={18}
+          connectionLineStyle={{ stroke: '#9ae8d1', strokeWidth: 2 }}
           onNodeClick={(_event, node) => setSelection(node.id.startsWith('actual:')
             ? { type: 'actual', id: node.id.slice('actual:'.length) }
             : { type: 'node', id: node.id })}
@@ -543,7 +568,12 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
             position="bottom-right"
             pannable
             zoomable
+            ariaLabel="Мини-карта архитектуры"
+            bgColor="#0b0f15"
             maskColor="rgba(6, 8, 13, .72)"
+            nodeBorderRadius={8}
+            nodeStrokeColor="#91e4cc"
+            nodeStrokeWidth={2}
             nodeColor={(node) => driftColor((node.data as BlueprintGraphNodeData).drift)}
           />
         </ReactFlow>
@@ -659,7 +689,7 @@ function ActualInspector({ node }: { node: AtlasNode }) {
 }
 
 function BlueprintHelp({ drift }: { drift: { matched: number; planned: number; actual: number } }) {
-  return <div className="blueprint-help"><span>Architecture Blueprint</span><h2>Спроектируйте целевую архитектуру</h2><p>Добавляйте компоненты, связывайте их и сравнивайте план с кодом, который Code Atlas уже обнаружил.</p><ol><li><i>1</i>Перетащите компоненты</li><li><i>2</i>Соедините точки на узлах</li><li><i>3</i>Настройте свойства справа</li><li><i>4</i>Сохраните blueprint</li></ol><div><strong>{drift.planned}</strong><span>ещё нет в коде</span><strong>{drift.actual}</strong><span>не описано в плане</span></div><small>⌘Z — отмена · Delete — удалить · Esc — снять выбор</small></div>;
+  return <div className="blueprint-help"><span>Architecture Blueprint</span><h2>Спроектируйте целевую архитектуру</h2><p>Добавляйте компоненты, связывайте их и сравнивайте план с кодом, который Code Atlas уже обнаружил.</p><ol><li><i>1</i>Перетащите компоненты</li><li><i>2</i>Соедините точки на узлах</li><li><i>3</i>Настройте свойства справа</li><li><i>4</i>Сохраните blueprint</li></ol><div><strong>{drift.planned}</strong><span>ещё нет в коде</span><strong>{drift.actual}</strong><span>не описано в плане</span></div><small>Стрелка: выберите и перетащите конец · ⌘Z — отмена · Delete — удалить</small></div>;
 }
 
 function cleanNode(node: BlueprintNode): BlueprintNode {

@@ -40,6 +40,7 @@ const Graph3D = lazy(() => import('./components/Graph3D'));
 const ArchitectureConstructor = lazy(() => import('./components/ArchitectureConstructor'));
 const RuntimeTracePanel = lazy(() => import('./components/RuntimeTracePanel'));
 const ALL_KINDS: NodeKind[] = ['project', 'service', 'database', 'module', 'controller', 'class', 'interface', 'function'];
+const SIDEBAR_STORAGE_KEY = 'code-atlas:ui:sidebar:v1';
 
 const COLOR_BY_KIND: Record<NodeKind, string> = {
   project: '#f4cd72',
@@ -62,6 +63,7 @@ export function App() {
   const [focusNode, setFocusNode] = useState<AtlasNode | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [workspaceMode, setWorkspaceMode] = useState<'map' | 'constructor'>('map');
+  const [sidebarOpen, setSidebarOpen] = useState(() => readSidebarPreference());
   const [loading, setLoading] = useState(true);
   const [jobStatus, setJobStatus] = useState<AnalysisJobStatus | null>(null);
   const [jobProgress, setJobProgress] = useState<AnalysisProgress | null>(null);
@@ -217,6 +219,14 @@ export function App() {
   }, [loadAnalysis, loadSnapshots]);
 
   useEffect(() => () => activeRequest.current?.abort(), []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_STORAGE_KEY, sidebarOpen ? 'open' : 'collapsed');
+    } catch {
+      // The layout remains usable when storage is disabled by the host WebView.
+    }
+  }, [sidebarOpen]);
 
   const focusedGraph = useMemo(() => {
     if (!analysis) return { nodes: [] as AtlasNode[], edges: [] as AtlasEdge[] };
@@ -377,7 +387,7 @@ export function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={sidebarOpen ? 'app-shell' : 'app-shell is-sidebar-collapsed'}>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">CA</span><strong>Code Atlas</strong><em>alpha</em></div>
         <form className="path-form" onSubmit={handleAnalyze}>
@@ -451,7 +461,16 @@ export function App() {
 
       <section className={`canvas-shell ${workspaceMode === 'map' && (requestPanelOpen || runtimePanelOpen) ? 'is-request-panel-open' : ''}`}>
         <div className="canvas-toolbar">
-          <div>
+          <div className="canvas-toolbar__context">
+            <button
+              type="button"
+              className="sidebar-toggle"
+              aria-controls="project-sidebar"
+              aria-expanded={sidebarOpen}
+              aria-label={sidebarOpen ? 'Скрыть левую панель' : 'Показать левую панель'}
+              title={sidebarOpen ? 'Скрыть левую панель' : 'Показать левую панель'}
+              onClick={() => setSidebarOpen((current) => !current)}
+            ><span aria-hidden="true">{sidebarOpen ? '‹' : '☰'}</span></button>
             <span className="pulse" />
             {workspaceMode === 'map' ? (
               <>
@@ -664,6 +683,14 @@ function analysisProgressLabel(status: AnalysisJobStatus | null, progress: Analy
     case 'parsing': return 'Разбираем исходный код…';
     case 'comparing': return 'Сравниваем с Git-версией…';
     case 'finalizing': return 'Собираем граф и сохраняем снимок…';
+  }
+}
+
+function readSidebarPreference(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_STORAGE_KEY) !== 'collapsed';
+  } catch {
+    return true;
   }
 }
 

@@ -51,7 +51,7 @@ export function ProjectSidebar({
   };
 
   return (
-    <aside className="project-sidebar">
+    <aside className="project-sidebar" id="project-sidebar" aria-label="Обзор проекта">
       <section>
         <p className="eyebrow">Обзор проекта</p>
         <h1>{summary.name}</h1>
