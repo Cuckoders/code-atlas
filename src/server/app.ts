@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -22,6 +22,12 @@ import type { RequestProbeInput, RequestProbeResult } from '../shared/request-tr
 import { AnalysisQueue } from './analysis-queue.js';
 import { AnalysisError, analyzeProject, type AnalyzeProjectOptions } from './analyzer.js';
 import { executeRequestProbe, RequestProbeValidationError } from './request-probe.js';
+import {
+  createDemoOtlpPayload,
+  MAX_OTLP_JSON_SIZE,
+  parseOtlpJson,
+  RuntimeTraceValidationError,
+} from './runtime-trace.js';
 import { SnapshotStore } from './snapshot-store.js';
 
 interface CreateAppOptions {
@@ -36,6 +42,7 @@ interface CreateAppOptions {
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<FastifyInstance> {
+  const collectorToken = randomBytes(32).toString('hex');
   const app = Fastify({
     logger: options.logger ?? true,
     bodyLimit: 16 * 1024,
@@ -43,25 +50,36 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
 
   await app.register(cors, {
     origin: /^(?:https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?|tauri:\/\/localhost|https?:\/\/tauri\.localhost)$/,
-    allowedHeaders: ['content-type', 'x-code-atlas-token'],
+    allowedHeaders: ['content-type', 'x-code-atlas-token', 'x-code-atlas-otlp-token'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, { global: false });
 
-  if (options.apiToken) {
-    const expectedToken = Buffer.from(options.apiToken);
-    app.addHook('onRequest', async (request, reply) => {
-      if (request.method === 'OPTIONS') return;
+  const expectedApiToken = options.apiToken ? Buffer.from(options.apiToken) : null;
+  const expectedCollectorToken = Buffer.from(collectorToken);
+  app.addHook('onRequest', async (request, reply) => {
+    if (request.method === 'OPTIONS') return;
+    if (request.url.split('?', 1)[0] === '/v1/traces') {
+      const tokenHeader = request.headers['x-code-atlas-otlp-token'];
+      const providedToken = typeof tokenHeader === 'string' ? Buffer.from(tokenHeader) : null;
+      if (!providedToken
+        || providedToken.byteLength !== expectedCollectorToken.byteLength
+        || !timingSafeEqual(providedToken, expectedCollectorToken)) {
+        return reply.status(401).send({ error: 'Недействительный токен локального OTLP-коллектора.' });
+      }
+      return;
+    }
+    if (expectedApiToken) {
       const tokenHeader = request.headers['x-code-atlas-token'];
       const providedToken = typeof tokenHeader === 'string' ? Buffer.from(tokenHeader) : null;
       if (!providedToken
-        || providedToken.byteLength !== expectedToken.byteLength
-        || !timingSafeEqual(providedToken, expectedToken)) {
+        || providedToken.byteLength !== expectedApiToken.byteLength
+        || !timingSafeEqual(providedToken, expectedApiToken)) {
         return reply.status(401).send({ error: 'Недействительный токен desktop-сессии.' });
       }
-    });
-  }
+    }
+  });
 
   const defaultDatabasePath = path.resolve(process.cwd(), '.code-atlas/code-atlas.sqlite');
   const snapshots = new SnapshotStore(options.databasePath ?? process.env.CODE_ATLAS_DATABASE ?? defaultDatabasePath);
@@ -85,6 +103,65 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   }
 
   app.get('/api/health', async () => ({ status: 'ok' }));
+
+  app.get<{ Querystring: { projectPath: string } }>('/api/runtime-traces/collector', {
+    schema: { querystring: projectPathQuerySchema },
+  }, async (request) => ({
+    endpoint: `/v1/traces?projectPath=${encodeURIComponent(request.query.projectPath)}`,
+    token: collectorToken,
+    protocol: 'otlp-http-json',
+    limits: { bodyBytes: MAX_OTLP_JSON_SIZE, spansPerBatch: 500 },
+  }));
+
+  app.post<{ Querystring: { projectPath: string }; Body: unknown }>('/v1/traces', {
+    bodyLimit: MAX_OTLP_JSON_SIZE,
+    config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
+    schema: { querystring: projectPathQuerySchema },
+  }, async (request, reply) => {
+    try {
+      const sessions = parseOtlpJson(request.body, request.query.projectPath);
+      snapshots.saveRuntimeTraces(sessions);
+      return { partialSuccess: {} };
+    } catch (error) {
+      if (error instanceof RuntimeTraceValidationError) return reply.status(400).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.post<{ Body: { projectPath: string } }>('/api/runtime-traces/demo', {
+    bodyLimit: 4_096,
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    schema: {
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['projectPath'],
+        properties: projectPathQuerySchema.properties,
+      },
+    },
+  }, async (request) => {
+    const sessions = parseOtlpJson(createDemoOtlpPayload(), request.body.projectPath);
+    return snapshots.saveRuntimeTraces(sessions)[0];
+  });
+
+  app.get<{ Querystring: { projectPath: string; limit?: number } }>('/api/runtime-traces', {
+    schema: {
+      querystring: {
+        ...projectPathQuerySchema,
+        properties: {
+          ...projectPathQuerySchema.properties,
+          limit: { type: 'integer', minimum: 1, maximum: 50 },
+        },
+      },
+    },
+  }, async (request) => snapshots.listRuntimeTraces(request.query.projectPath, request.query.limit));
+
+  app.get<{ Params: { id: string } }>('/api/runtime-traces/:id', {
+    schema: { params: identifierParamsSchema },
+  }, async (request, reply) => {
+    const session = snapshots.getRuntimeTrace(request.params.id);
+    return session ?? reply.status(404).send({ error: 'Runtime trace не найден.' });
+  });
 
   app.post<{ Body: RequestProbeInput }>('/api/request-probes', {
     config: {
@@ -255,6 +332,15 @@ const requestProbeSchema = {
 } as const;
 
 const blueprintQuerySchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['projectPath'],
+  properties: {
+    projectPath: { type: 'string', minLength: 1, maxLength: 4_096, pattern: '^[^\\u0000\\r\\n]+$' },
+  },
+} as const;
+
+const projectPathQuerySchema = {
   type: 'object',
   additionalProperties: false,
   required: ['projectPath'],

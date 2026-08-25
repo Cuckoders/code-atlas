@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { analyzeProject } from '../src/server/analyzer.js';
 import { SnapshotStore } from '../src/server/snapshot-store.js';
 import type { ArchitectureBlueprintDraft } from '../src/shared/blueprint.js';
+import { createDemoOtlpPayload, parseOtlpJson } from '../src/server/runtime-trace.js';
 
 describe('SnapshotStore', () => {
   it('reopens a persisted analysis from SQLite', async () => {
@@ -29,6 +30,8 @@ describe('SnapshotStore', () => {
         edges: [],
       };
       const savedBlueprint = firstStore.saveBlueprint(blueprint);
+      const [runtimeTrace] = parseOtlpJson(createDemoOtlpPayload(), analysis.summary.rootPath);
+      firstStore.saveRuntimeTraces([runtimeTrace]);
       firstStore.close();
 
       const reopenedStore = new SnapshotStore(databasePath);
@@ -38,6 +41,10 @@ describe('SnapshotStore', () => {
         analysis: expect.objectContaining({ summary: analysis.summary }),
       }));
       expect(reopenedStore.getBlueprint(analysis.summary.rootPath)).toEqual(savedBlueprint);
+      expect(reopenedStore.listRuntimeTraces(analysis.summary.rootPath)).toEqual([
+        expect.objectContaining({ id: runtimeTrace.summary.id, spanCount: 4, status: 'error' }),
+      ]);
+      expect(reopenedStore.getRuntimeTrace(runtimeTrace.summary.id)).toEqual(runtimeTrace);
       const warmAnalysis = await analyzeProject(fixturePath, { parseCache: reopenedStore });
       expect(warmAnalysis.summary.incremental).toEqual({ eligibleFiles: 7, reusedFiles: 7, parsedFiles: 0 });
       reopenedStore.close();

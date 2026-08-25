@@ -38,6 +38,7 @@ const nodeTypes = { atlas: AtlasGraphNode, serviceZone: GraphZoneNode, layerZone
 const edgeTypes = { requestTrace: RequestTraceEdge };
 const Graph3D = lazy(() => import('./components/Graph3D'));
 const ArchitectureConstructor = lazy(() => import('./components/ArchitectureConstructor'));
+const RuntimeTracePanel = lazy(() => import('./components/RuntimeTracePanel'));
 const ALL_KINDS: NodeKind[] = ['project', 'service', 'database', 'module', 'controller', 'class', 'interface', 'function'];
 
 const COLOR_BY_KIND: Record<NodeKind, string> = {
@@ -70,6 +71,7 @@ export function App() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [requestPanelOpen, setRequestPanelOpen] = useState(false);
+  const [runtimePanelOpen, setRuntimePanelOpen] = useState(false);
   const [requestTrace, setRequestTrace] = useState<RequestTrace | null>(null);
   const [graphLayoutMode, setGraphLayoutMode] = useState<GraphLayoutMode>('services');
   const activeRequest = useRef<AbortController | null>(null);
@@ -253,7 +255,7 @@ export function App() {
     if (viewMode !== '2d' || !requestTrace || !flowInstance.current) return;
     const frame = window.requestAnimationFrame(() => fitRequestPath(flowInstance.current, requestTrace));
     return () => window.cancelAnimationFrame(frame);
-  }, [graphLayoutMode, requestPanelOpen, requestTrace, viewMode]);
+  }, [graphLayoutMode, requestPanelOpen, requestTrace, runtimePanelOpen, viewMode]);
 
   const handleAnalyze = (event: React.FormEvent) => {
     event.preventDefault();
@@ -278,6 +280,7 @@ export function App() {
     if (!atlas) return;
     setSelectedNode(atlas);
     setRequestPanelOpen(false);
+    setRuntimePanelOpen(false);
   }, []);
 
   const handleNodeDoubleClick = useCallback<NodeMouseHandler>((_event, flowNode) => {
@@ -305,6 +308,7 @@ export function App() {
   const changeWorkspaceMode = useCallback((mode: 'map' | 'constructor') => {
     startTransition(() => setWorkspaceMode(mode));
     setRequestPanelOpen(false);
+    setRuntimePanelOpen(false);
     setSelectedNode(null);
   }, []);
 
@@ -354,6 +358,7 @@ export function App() {
     if (!node) return;
     setSelectedNode(node);
     setRequestPanelOpen(false);
+    setRuntimePanelOpen(false);
   }, [analysis?.nodes]);
 
   if (!analysis && loading) {
@@ -444,7 +449,7 @@ export function App() {
         loading={loading}
       />
 
-      <section className={`canvas-shell ${workspaceMode === 'map' && requestPanelOpen ? 'is-request-panel-open' : ''}`}>
+      <section className={`canvas-shell ${workspaceMode === 'map' && (requestPanelOpen || runtimePanelOpen) ? 'is-request-panel-open' : ''}`}>
         <div className="canvas-toolbar">
           <div>
             <span className="pulse" />
@@ -502,9 +507,22 @@ export function App() {
                   aria-pressed={requestPanelOpen}
                   onClick={() => {
                     setSelectedNode(null);
+                    setRuntimePanelOpen(false);
                     setRequestPanelOpen((current) => !current);
                   }}
                 ><span>↗</span> Запрос</button>
+                <button
+                  type="button"
+                  className={`request-trace-toggle runtime-trace-toggle ${runtimePanelOpen ? 'is-active' : ''}`}
+                  aria-pressed={runtimePanelOpen}
+                  onMouseEnter={() => void import('./components/RuntimeTracePanel')}
+                  onFocus={() => void import('./components/RuntimeTracePanel')}
+                  onClick={() => {
+                    setSelectedNode(null);
+                    setRequestPanelOpen(false);
+                    setRuntimePanelOpen((current) => !current);
+                  }}
+                ><span>⌁</span> Трейсы</button>
                 <label className="search-field">
                   <span>⌕</span>
                   <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Найти модуль, класс, путь…" />
@@ -524,7 +542,7 @@ export function App() {
         ) : viewMode === '2d' ? (
           <div className="graph-viewport">
             <ReactFlow
-              key={`${graphLayoutMode}:${focusNode?.id ?? 'root'}:${requestPanelOpen ? 'trace-open' : 'trace-closed'}`}
+              key={`${graphLayoutMode}:${focusNode?.id ?? 'root'}:${requestPanelOpen || runtimePanelOpen ? 'trace-open' : 'trace-closed'}`}
               nodes={graph.nodes}
               edges={graph.edges}
               nodeTypes={nodeTypes}
@@ -600,15 +618,28 @@ export function App() {
         ) : null}
 
         {workspaceMode === 'map' ? (
-          <RequestTracePanel
-            key={`${analysis.summary.rootPath}:${activeSnapshotId ?? 'live'}`}
-            analysis={analysis}
-            open={requestPanelOpen}
-            trace={requestTrace}
-            onClose={() => setRequestPanelOpen(false)}
-            onTrace={handleRequestTrace}
-            onSelectNode={selectRequestTraceNode}
-          />
+          <>
+            <RequestTracePanel
+              key={`${analysis.summary.rootPath}:${activeSnapshotId ?? 'live'}`}
+              analysis={analysis}
+              open={requestPanelOpen}
+              trace={requestTrace}
+              onClose={() => setRequestPanelOpen(false)}
+              onTrace={handleRequestTrace}
+              onSelectNode={selectRequestTraceNode}
+            />
+            {runtimePanelOpen ? (
+              <Suspense fallback={null}>
+                <RuntimeTracePanel
+                  analysis={analysis}
+                  open={runtimePanelOpen}
+                  onClose={() => setRuntimePanelOpen(false)}
+                  onTrace={handleRequestTrace}
+                  onSelectNode={selectRequestTraceNode}
+                />
+              </Suspense>
+            ) : null}
+          </>
         ) : null}
       </section>
 

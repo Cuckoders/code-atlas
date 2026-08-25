@@ -25,6 +25,7 @@
 - blast radius выбранного компонента: прямые зависимости, потребители и транзитивно затронутые узлы с оценкой уровня влияния;
 - Request Trace: отправка HTTP-запроса на локальный сервис, показ фактического ответа, сопоставление endpoint с route и подсветка вероятного пути/точки отказа на 2D- и 3D-карте;
 - анимированный Request Trace: движущиеся маркеры вызова, подсветка затронутых зон и пульсирующая точка вероятного падения с поддержкой `prefers-reduced-motion`;
+- Runtime Trace: локальный OTLP/HTTP JSON collector, история до 100 trace-сессий на проект, waterfall spans, фактический exception/stack trace и подсветка измеренного пути на 2D- и 3D-карте;
 - сервисы по manifest-файлам (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, Maven/Gradle и другие);
 - языковая статистика для TypeScript/JavaScript, Python, Java/Kotlin, Go, Rust, C#, PHP, Ruby, Swift, Dart и web-файлов;
 - глубокий разбор классов, интерфейсов, функций, методов, контроллеров и HTTP-маршрутов для TypeScript/JavaScript и Python;
@@ -53,7 +54,13 @@
 
 В 2D переключатель «Сервисы / Слои» меняет представление той же карты: первое группирует код в границы приложений, второе раскладывает узлы по архитектурной ответственности. Во время Request Trace активные зоны подсвечиваются, по связям движутся маркеры запроса, а карта автоматически фокусирует весь путь и резервирует место под правую панель.
 
-Это гибрид фактического HTTP-ответа и статического анализа, а не инструментальная трассировка процесса: точка падения является вероятной. Для точного exception/span потребуется последующее подключение OpenTelemetry. Из соображений безопасности разрешены только `localhost`, `127.0.0.1` и `::1`; redirects, URL credentials и транспортные заголовки запрещены, тело и preview ответа ограничены, запросы не сохраняются.
+Это гибрид фактического HTTP-ответа и статического анализа: пока приложение не присылает OpenTelemetry spans, точка падения остаётся вероятной. Из соображений безопасности разрешены только `localhost`, `127.0.0.1` и `::1`; redirects, URL credentials и транспортные заголовки запрещены, тело и preview ответа ограничены, запросы не сохраняются.
+
+### Runtime Trace
+
+Кнопка «Трейсы» открывает локальный OTLP collector. Панель показывает endpoint и отдельный одноразовый заголовок `x-code-atlas-otlp-token`, который можно скопировать в JSON-совместимый OpenTelemetry exporter или локальный collector/agent. `projectPath` уже включён в endpoint и связывает spans с открытой картой. При поступлении данных Code Atlas сохраняет trace-сессии в SQLite, строит waterfall, показывает exception и stack trace и сопоставляет `service.name`, `http.route`, `db.system` и semantic conventions `code.*` с узлами статического графа.
+
+Сейчас принимается OTLP/HTTP JSON до 1 МБ и 500 spans за пакет; protobuf и gRPC будут добавлены следующим транспортным адаптером. Секретные атрибуты (`authorization`, cookies, passwords, tokens и API keys) заменяются на `[REDACTED]`, строки и stack trace ограничены. Для быстрой проверки кнопка «Демо-трасса с ошибкой» создаёт локальную сессию без запуска анализируемого проекта.
 
 ### Конструктор архитектуры
 
@@ -161,10 +168,13 @@ token-protected Fastify loopback API ──► priority queue ──► worker p
 - `POST /api/request-probes` — выполнить ограниченный HTTP-запрос только к loopback и вернуть фактический результат для Request Trace.
 - `GET /api/blueprints?projectPath=...` — открыть blueprint проекта или `null`, если он ещё не создан;
 - `PUT /api/blueprints` — валидировать и сохранить blueprint (до 200 узлов, 400 связей и 256 КБ).
+- `GET /api/runtime-traces/collector?projectPath=...` — получить локальный endpoint и отдельный OTLP-токен;
+- `POST /v1/traces?projectPath=...` — принять аутентифицированный OTLP/HTTP JSON пакет;
+- `GET /api/runtime-traces?projectPath=...` и `GET /api/runtime-traces/:id` — история и детали runtime-трассировок.
 
 ## Следующий этап
 
-1. Подключить OpenTelemetry spans к Request Trace для точного runtime-пути и stack trace вместо вероятностной точки отказа.
+1. Добавить OTLP/HTTP protobuf и gRPC transport, чтобы подключать стандартные SDK без JSON-адаптера.
 2. Подключить Windows Authenticode и Tauri updater после создания GitHub remote и выпуска ключей подписи.
 3. Опциональный sandboxed LSP-режим с явным согласием пользователя для более точного разрешения динамических вызовов.
 4. Swift Tree-sitter WASM-адаптер.

@@ -6,6 +6,8 @@ import { createApp } from '../src/server/app.js';
 import type { AnalysisJob, AnalysisSnapshotSummary, StoredAnalysisSnapshot } from '../src/shared/graph.js';
 import type { RequestProbeResult } from '../src/shared/request-trace.js';
 import type { ArchitectureBlueprint } from '../src/shared/blueprint.js';
+import { createDemoOtlpPayload } from '../src/server/runtime-trace.js';
+import type { RuntimeTraceSession, RuntimeTraceSummary } from '../src/shared/runtime-trace.js';
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.resolve(currentDirectory, '../examples/sample-commerce');
@@ -70,7 +72,54 @@ describe('API', () => {
 
     expect(response.statusCode).toBe(204);
     expect(response.headers['access-control-allow-origin']).toBe('tauri://localhost');
-    expect(response.headers['access-control-allow-headers']).toBe('content-type, x-code-atlas-token');
+    expect(response.headers['access-control-allow-headers']).toBe('content-type, x-code-atlas-token, x-code-atlas-otlp-token');
+  });
+
+  it('ingests authenticated local OTLP JSON and exposes stored sessions', async () => {
+    const apiToken = 'c'.repeat(64);
+    app = await createApp({ logger: false, databasePath: ':memory:', apiToken });
+    const projectPath = fixturePath;
+    const configResponse = await app.inject({
+      method: 'GET',
+      url: `/api/runtime-traces/collector?projectPath=${encodeURIComponent(projectPath)}`,
+      headers: { 'x-code-atlas-token': apiToken },
+    });
+    const config = configResponse.json<{ endpoint: string; token: string }>();
+    expect(config.token).toMatch(/^[0-9a-f]{64}$/);
+
+    const unauthorized = await app.inject({
+      method: 'POST',
+      url: config.endpoint,
+      payload: createDemoOtlpPayload(),
+    });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const accepted = await app.inject({
+      method: 'POST',
+      url: config.endpoint,
+      headers: { 'x-code-atlas-otlp-token': config.token },
+      payload: createDemoOtlpPayload(),
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json()).toEqual({ partialSuccess: {} });
+
+    const list = await app.inject({
+      method: 'GET',
+      url: `/api/runtime-traces?projectPath=${encodeURIComponent(projectPath)}`,
+      headers: { 'x-code-atlas-token': apiToken },
+    });
+    const summaries = list.json<RuntimeTraceSummary[]>();
+    expect(summaries).toEqual([expect.objectContaining({ status: 'error', spanCount: 4 })]);
+
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/runtime-traces/${summaries[0].id}`,
+      headers: { 'x-code-atlas-token': apiToken },
+    });
+    expect(detail.json<RuntimeTraceSession>()).toEqual(expect.objectContaining({
+      summary: expect.objectContaining({ id: summaries[0].id }),
+      spans: expect.arrayContaining([expect.objectContaining({ status: 'error' })]),
+    }));
   });
 
   it('rejects unsafe Git references', async () => {

@@ -40,6 +40,15 @@ export async function apiFetch(apiPath: string, init?: RequestInit): Promise<Res
   return fetch(new URL(apiPath, `${connection.origin}/`), { ...init, headers });
 }
 
+export async function resolveBackendUrl(backendPath: string): Promise<string> {
+  if (!backendPath.startsWith('/') || backendPath.startsWith('//')) {
+    throw new Error('Backend path must be absolute and local.');
+  }
+  if (!isTauri()) return new URL(backendPath, window.location.origin).toString();
+  const connection = await getDesktopBackend();
+  return new URL(backendPath, `${connection.origin}/`).toString();
+}
+
 async function getDesktopBackend(): Promise<BackendConnection> {
   backendConnection ??= connectDesktopBackend();
   return backendConnection;

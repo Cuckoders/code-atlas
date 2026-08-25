@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { AnalysisSnapshotSummary, ProjectAnalysis, StoredAnalysisSnapshot } from '../shared/graph.js';
+import type { RuntimeTraceSession, RuntimeTraceSummary } from '../shared/runtime-trace.js';
 import {
   MAX_BLUEPRINT_JSON_SIZE,
   validateArchitectureBlueprint,
@@ -19,6 +20,7 @@ import type { ParsedSource } from './tree-sitter-parser.js';
 
 const MAX_SNAPSHOTS = 50;
 const MAX_PARSED_FILES = 15_000;
+const MAX_RUNTIME_TRACES_PER_PROJECT = 100;
 
 interface SnapshotRow {
   id: string;
@@ -31,6 +33,21 @@ interface SnapshotRow {
   edge_count: number;
   duration_ms: number;
   analysis_json?: string;
+}
+
+interface RuntimeTraceRow {
+  id: string;
+  project_path: string;
+  trace_id: string;
+  name: string;
+  created_at: string;
+  started_at: string;
+  duration_ms: number;
+  status: 'unset' | 'ok' | 'error';
+  span_count: number;
+  error_count: number;
+  service_names_json: string;
+  trace_json?: string;
 }
 
 export class SnapshotStore implements ParseCache {
@@ -75,6 +92,22 @@ export class SnapshotStore implements ParseCache {
         updated_at TEXT NOT NULL,
         blueprint_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS runtime_traces (
+        id TEXT PRIMARY KEY,
+        project_path TEXT NOT NULL,
+        trace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        duration_ms REAL NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('unset', 'ok', 'error')),
+        span_count INTEGER NOT NULL,
+        error_count INTEGER NOT NULL,
+        service_names_json TEXT NOT NULL,
+        trace_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS runtime_traces_project_created_at
+        ON runtime_traces(project_path, created_at DESC);
     `);
   }
 
@@ -227,6 +260,75 @@ export class SnapshotStore implements ParseCache {
     }
   }
 
+  saveRuntimeTraces(sessions: RuntimeTraceSession[]): RuntimeTraceSummary[] {
+    if (!sessions.length) return [];
+    const insert = this.database.prepare(`
+      INSERT INTO runtime_traces (
+        id, project_path, trace_id, name, created_at, started_at, duration_ms,
+        status, span_count, error_count, service_names_json, trace_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      for (const session of sessions) {
+        const summary = session.summary;
+        insert.run(
+          summary.id,
+          summary.projectPath,
+          summary.traceId,
+          summary.name,
+          summary.createdAt,
+          summary.startedAt,
+          summary.durationMs,
+          summary.status,
+          summary.spanCount,
+          summary.errorCount,
+          JSON.stringify(summary.serviceNames),
+          JSON.stringify(session),
+        );
+        this.database.prepare(`
+          DELETE FROM runtime_traces
+          WHERE project_path = ? AND id IN (
+            SELECT id FROM runtime_traces
+            WHERE project_path = ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT -1 OFFSET ?
+          )
+        `).run(summary.projectPath, summary.projectPath, MAX_RUNTIME_TRACES_PER_PROJECT);
+      }
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+    return sessions.map((session) => session.summary);
+  }
+
+  listRuntimeTraces(projectPath: string, limit = 20): RuntimeTraceSummary[] {
+    const safeLimit = Math.max(1, Math.min(limit, 50));
+    const rows = this.database.prepare(`
+      SELECT id, project_path, trace_id, name, created_at, started_at, duration_ms,
+             status, span_count, error_count, service_names_json
+      FROM runtime_traces
+      WHERE project_path = ?
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT ?
+    `).all(projectPath, safeLimit) as unknown as RuntimeTraceRow[];
+    return rows.map(toRuntimeTraceSummary);
+  }
+
+  getRuntimeTrace(id: string): RuntimeTraceSession | null {
+    const row = this.database.prepare(`
+      SELECT trace_json FROM runtime_traces WHERE id = ?
+    `).get(id) as { trace_json?: unknown } | undefined;
+    if (typeof row?.trace_json !== 'string') return null;
+    try {
+      return JSON.parse(row.trace_json) as RuntimeTraceSession;
+    } catch {
+      return null;
+    }
+  }
+
   close(): void {
     this.database.close();
   }
@@ -243,5 +345,28 @@ function toSummary(row: SnapshotRow): AnalysisSnapshotSummary {
     nodeCount: row.node_count,
     edgeCount: row.edge_count,
     durationMs: row.duration_ms,
+  };
+}
+
+function toRuntimeTraceSummary(row: RuntimeTraceRow): RuntimeTraceSummary {
+  let serviceNames: string[] = [];
+  try {
+    const parsed: unknown = JSON.parse(row.service_names_json);
+    if (Array.isArray(parsed) && parsed.every((value) => typeof value === 'string')) serviceNames = parsed;
+  } catch {
+    // A corrupted optional label must not prevent the remaining trace history from loading.
+  }
+  return {
+    id: row.id,
+    projectPath: row.project_path,
+    traceId: row.trace_id,
+    name: row.name,
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    durationMs: row.duration_ms,
+    status: row.status,
+    spanCount: row.span_count,
+    errorCount: row.error_count,
+    serviceNames,
   };
 }
