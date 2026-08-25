@@ -62,6 +62,8 @@ const COLOR_BY_KIND: Record<NodeKind, string> = {
   function: '#b7c4d9',
 };
 
+type RightToolPanel = 'request' | 'runtime' | null;
+
 export function App() {
   const [analysis, setAnalysis] = useState<ProjectAnalysis | null>(null);
   const [projectPath, setProjectPath] = useState('');
@@ -82,8 +84,9 @@ export function App() {
   const [activeSnapshotId, setActiveSnapshotId] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [requestPanelOpen, setRequestPanelOpen] = useState(false);
-  const [runtimePanelOpen, setRuntimePanelOpen] = useState(false);
+  const [rightToolPanel, setRightToolPanel] = useState<RightToolPanel>(null);
+  const requestPanelOpen = rightToolPanel === 'request';
+  const runtimePanelOpen = rightToolPanel === 'runtime';
   const [requestTrace, setRequestTrace] = useState<RequestTrace | null>(null);
   const [tracePlayback, setTracePlayback] = useState<TracePlaybackOptions>({ speed: 1, playing: true });
   const [graphLayoutMode, setGraphLayoutMode] = useState<GraphLayoutMode>('services');
@@ -100,6 +103,7 @@ export function App() {
     setSelectedNode(null);
     setFocusNode(null);
     setRequestTrace(null);
+    setRightToolPanel(null);
   }, []);
 
   const loadAnalysis = useCallback(async (url: string, init?: RequestInit) => {
@@ -339,6 +343,7 @@ export function App() {
     }
     const atlas = (nodes[0].data as Partial<AtlasGraphNodeData>).atlas;
     setSelectedNode(atlas ?? null);
+    if (atlas) setRightToolPanel(null);
   }, []);
 
   useEffect(() => {
@@ -369,8 +374,7 @@ export function App() {
     const atlas = (flowNode.data as Partial<AtlasGraphNodeData>).atlas;
     if (!atlas) return;
     setSelectedNode(atlas);
-    setRequestPanelOpen(false);
-    setRuntimePanelOpen(false);
+    setRightToolPanel(null);
   }, []);
 
   const openNodeSource = useCallback(async (node: AtlasNode, line?: number) => {
@@ -399,9 +403,9 @@ export function App() {
 
   const changeWorkspaceMode = useCallback((mode: 'map' | 'constructor') => {
     startTransition(() => setWorkspaceMode(mode));
-    setRequestPanelOpen(false);
-    setRuntimePanelOpen(false);
+    setRightToolPanel(null);
     setSelectedNode(null);
+    setMapSelectedIds(new Set());
   }, []);
 
   const diveIntoSelected = useCallback(() => {
@@ -419,6 +423,7 @@ export function App() {
       setFocusNode(null);
       setSelectedNode(target);
     });
+    setRightToolPanel(null);
   }, [analysis]);
 
   const compareWithGitReference = useCallback((compareRef: string) => {
@@ -449,7 +454,13 @@ export function App() {
     const node = analysis?.nodes.find((item) => item.id === nodeId);
     if (!node) return;
     setSelectedNode(node);
+    setRightToolPanel(null);
   }, [analysis?.nodes]);
+
+  const selectGraph3DNode = useCallback((node: AtlasNode | null) => {
+    setSelectedNode(node);
+    if (node) setRightToolPanel(null);
+  }, []);
 
   if (!analysis && loading) {
     return <LoadingScreen label="Строим карту демонстрационного проекта" />;
@@ -604,8 +615,8 @@ export function App() {
                   aria-pressed={requestPanelOpen}
                   onClick={() => {
                     setSelectedNode(null);
-                    setRuntimePanelOpen(false);
-                    setRequestPanelOpen((current) => !current);
+                    setMapSelectedIds(new Set());
+                    setRightToolPanel((current) => current === 'request' ? null : 'request');
                   }}
                 ><span>↗</span> Запрос</button>
                 <button
@@ -616,8 +627,8 @@ export function App() {
                   onFocus={() => void import('./components/RuntimeTracePanel')}
                   onClick={() => {
                     setSelectedNode(null);
-                    setRequestPanelOpen(false);
-                    setRuntimePanelOpen((current) => !current);
+                    setMapSelectedIds(new Set());
+                    setRightToolPanel((current) => current === 'runtime' ? null : 'runtime');
                   }}
                 ><span>⌁</span> Трейсы</button>
                 <label className="search-field">
@@ -695,7 +706,7 @@ export function App() {
               selectedId={selectedNode?.id}
               requestTrace={requestTrace}
               tracePlayback={tracePlayback}
-              onSelect={setSelectedNode}
+              onSelect={selectGraph3DNode}
             />
           </Suspense>
         )}
@@ -737,7 +748,7 @@ export function App() {
               open={requestPanelOpen}
               trace={requestTrace}
               playback={tracePlayback}
-              onClose={() => setRequestPanelOpen(false)}
+              onClose={() => setRightToolPanel((current) => current === 'request' ? null : current)}
               onTrace={handleRequestTrace}
               onPlaybackChange={setTracePlayback}
               onSelectNode={selectRequestTraceNode}
@@ -748,7 +759,7 @@ export function App() {
                   analysis={analysis}
                   open={runtimePanelOpen}
                   playback={tracePlayback}
-                  onClose={() => setRuntimePanelOpen(false)}
+                  onClose={() => setRightToolPanel((current) => current === 'runtime' ? null : current)}
                   onTrace={handleRequestTrace}
                   onPlaybackChange={setTracePlayback}
                   onSelectNode={selectRequestTraceNode}
@@ -761,7 +772,7 @@ export function App() {
 
       {workspaceMode === 'map' ? (
         <Inspector
-          node={selectedNode}
+          node={rightToolPanel ? null : selectedNode}
           onClose={() => setSelectedNode(null)}
           canDive={Boolean(selectedNode && diveableIds.has(selectedNode.id))}
           onDive={diveIntoSelected}
