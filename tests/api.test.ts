@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { createApp } from '../src/server/app.js';
 import type { AnalysisJob, AnalysisSnapshotSummary, StoredAnalysisSnapshot } from '../src/shared/graph.js';
 import type { RequestProbeResult } from '../src/shared/request-trace.js';
-import type { ArchitectureBlueprint } from '../src/shared/blueprint.js';
+import type { ArchitectureBlueprint, BlueprintDocument, BlueprintDocumentSummary } from '../src/shared/blueprint.js';
 import { createDemoOtlpPayload } from '../src/server/runtime-trace.js';
 import type { RuntimeTraceSession, RuntimeTraceSummary } from '../src/shared/runtime-trace.js';
 import type { ResolvedSourceTarget } from '../src/server/source-editor.js';
@@ -407,6 +407,69 @@ describe('API', () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: 'Связь должна соединять два существующих разных узла.' });
+  });
+
+  it('manages a library of named blueprint documents', async () => {
+    app = await createApp({ logger: false, databasePath: ':memory:' });
+    const blueprint = {
+      version: 1,
+      projectPath: fixturePath,
+      nodes: [{
+        id: '123e4567-e89b-42d3-a456-426614174001',
+        label: 'Checkout API',
+        kind: 'controller',
+        status: 'planned',
+        position: { x: 20, y: 30 },
+        behavior: { kind: 'validate', config: 'orderId' },
+        codegen: { enabled: true, template: 'http-handler' },
+      }],
+      edges: [],
+    } as const;
+
+    const createdResponse = await app.inject({
+      method: 'POST',
+      url: '/api/blueprints/documents',
+      payload: { name: 'Checkout flow', blueprint },
+    });
+    expect(createdResponse.statusCode).toBe(201);
+    const created = createdResponse.json<BlueprintDocument>();
+    expect(created).toEqual(expect.objectContaining({ name: 'Checkout flow', nodes: blueprint.nodes }));
+
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/api/blueprints/documents?projectPath=${encodeURIComponent(fixturePath)}`,
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json<BlueprintDocumentSummary[]>()).toEqual([
+      expect.objectContaining({ id: created.id, name: 'Checkout flow', nodeCount: 1 }),
+    ]);
+
+    const opened = await app.inject({
+      method: 'GET',
+      url: `/api/blueprints/documents/${created.id}?projectPath=${encodeURIComponent(fixturePath)}`,
+    });
+    expect(opened.json<BlueprintDocument>()).toEqual(created);
+
+    const renamed = await app.inject({
+      method: 'PATCH',
+      url: `/api/blueprints/documents/${created.id}`,
+      payload: { projectPath: fixturePath, name: 'Checkout v2' },
+    });
+    expect(renamed.json<BlueprintDocument>()).toEqual(expect.objectContaining({ id: created.id, name: 'Checkout v2' }));
+
+    const duplicated = await app.inject({
+      method: 'POST',
+      url: `/api/blueprints/documents/${created.id}/duplicate`,
+      payload: { projectPath: fixturePath, name: 'Checkout copy' },
+    });
+    expect(duplicated.statusCode).toBe(201);
+    expect(duplicated.json<BlueprintDocument>()).toEqual(expect.objectContaining({ name: 'Checkout copy' }));
+
+    const removed = await app.inject({
+      method: 'DELETE',
+      url: `/api/blueprints/documents/${created.id}?projectPath=${encodeURIComponent(fixturePath)}`,
+    });
+    expect(removed.statusCode).toBe(204);
   });
 });
 

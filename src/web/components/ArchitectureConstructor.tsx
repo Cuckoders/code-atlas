@@ -16,6 +16,8 @@ import {
 } from '@xyflow/react';
 import {
   BLUEPRINT_EDGE_KINDS,
+  BLUEPRINT_BEHAVIOR_KINDS,
+  BLUEPRINT_CODE_TEMPLATES,
   BLUEPRINT_NODE_KINDS,
   BLUEPRINT_NODE_STATUSES,
   BLUEPRINT_VERSION,
@@ -23,12 +25,17 @@ import {
   MAX_BLUEPRINT_NODES,
   type ArchitectureBlueprint,
   type ArchitectureBlueprintDraft,
+  type BlueprintBehaviorKind,
+  type BlueprintCodeTemplate,
+  type BlueprintDocument,
+  type BlueprintDocumentSummary,
   type BlueprintEdge,
   type BlueprintEdgeKind,
   type BlueprintNode,
   type BlueprintNodeKind,
   type BlueprintNodeStatus,
 } from '../../shared/blueprint';
+import type { BlueprintSimulationResult } from '../../shared/blueprint-simulation';
 import type { AtlasNode, NodeKind, ProjectAnalysis } from '../../shared/graph';
 import type { BlueprintPreset } from '../../shared/blueprint-presets';
 import { apiFetch } from '../desktop';
@@ -47,6 +54,9 @@ import {
 
 const nodeTypes = { blueprint: BlueprintGraphNode };
 const BlueprintPresetLibrary = lazy(() => import('./BlueprintPresetLibrary'));
+const BlueprintLibrary = lazy(() => import('./BlueprintLibrary'));
+const BlueprintSimulationPanel = lazy(() => import('./BlueprintSimulationPanel'));
+const BlueprintCodegenPanel = lazy(() => import('./BlueprintCodegenPanel'));
 const BLUEPRINT_NODE_WIDTH = 210;
 const BLUEPRINT_NODE_HEIGHT = 64;
 const PALETTE_KINDS: BlueprintNodeKind[] = [
@@ -80,6 +90,16 @@ const STATUS_LABELS: Record<BlueprintNodeStatus, string> = {
   planned: 'Запланирован', approved: 'Согласован', implemented: 'Реализован',
 };
 
+const BEHAVIOR_LABELS: Record<BlueprintBehaviorKind, string> = {
+  pass: 'Передать без изменений', transform: 'Преобразовать JSON', validate: 'Проверить поля',
+  delay: 'Добавить задержку', fail: 'Вернуть ошибку', respond: 'Сформировать ответ',
+};
+
+const CODE_TEMPLATE_LABELS: Record<BlueprintCodeTemplate, string> = {
+  auto: 'Автоматически', service: 'Сервис', 'http-handler': 'HTTP handler', repository: 'Repository',
+  'event-handler': 'Event handler', class: 'Класс', interface: 'Интерфейс',
+};
+
 type Selection = { type: 'node' | 'edge' | 'actual'; id: string } | null;
 type SaveState = 'idle' | 'loading' | 'saving' | 'saved' | 'error';
 
@@ -108,7 +128,20 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
   const [message, setMessage] = useState('Загружаем blueprint…');
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [presetLibraryOpen, setPresetLibraryOpen] = useState(false);
+  const [blueprintLibraryOpen, setBlueprintLibraryOpen] = useState(false);
+  const [simulationOpen, setSimulationOpen] = useState(false);
+  const [codegenOpen, setCodegenOpen] = useState(false);
+  const [activeBlueprintId, setActiveBlueprintId] = useState<string | null>(null);
+  const [blueprintName, setBlueprintName] = useState('Основной blueprint');
+  const [simulationResult, setSimulationResult] = useState<BlueprintSimulationResult | null>(null);
+  const [simulationStep, setSimulationStep] = useState(-1);
   const [, setHistoryVersion] = useState(0);
+
+  useEffect(() => {
+    if (!simulationOpen || !simulationResult || simulationStep < 0 || simulationStep >= simulationResult.steps.length - 1) return;
+    const timer = window.setTimeout(() => setSimulationStep((step) => step + 1), 650);
+    return () => window.clearTimeout(timer);
+  }, [simulationOpen, simulationResult, simulationStep]);
 
   const replaceDocument = useCallback((next: ArchitectureBlueprintDraft, recordHistory = true) => {
     if (recordHistory) {
@@ -177,53 +210,87 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     setSelectedNodeIds(new Set());
   }, [commit, selectedNodeIds, selection]);
 
+  const openBlueprint = useCallback((payload: BlueprintDocument) => {
+    const draft: ArchitectureBlueprintDraft = {
+      version: payload.version,
+      projectPath: payload.projectPath,
+      nodes: payload.nodes,
+      edges: payload.edges,
+    };
+    documentRef.current = draft;
+    setDocument(draft);
+    setActiveBlueprintId(payload.id);
+    setBlueprintName(payload.name);
+    setUpdatedAt(payload.updatedAt);
+    setDirty(false);
+    setSaveState('saved');
+    setMessage('Blueprint открыт.');
+    setSelection(null);
+    setSelectedNodeIds(new Set());
+    setSimulationResult(null);
+    history.current = { past: [], future: [] };
+    setHistoryVersion((value) => value + 1);
+    window.requestAnimationFrame(() => void flowInstance.current?.fitView({ padding: 0.2, duration: 300 }));
+  }, []);
+
+  const startNewBlueprint = useCallback((name: string) => {
+    documentRef.current = emptyDocument;
+    setDocument(emptyDocument);
+    setActiveBlueprintId(null);
+    setBlueprintName(name);
+    setUpdatedAt(null);
+    setDirty(true);
+    setSaveState('idle');
+    setMessage('Новый blueprint готов к редактированию.');
+    setSelection(null);
+    setSelectedNodeIds(new Set());
+    setSimulationResult(null);
+    history.current = { past: [], future: [] };
+    setHistoryVersion((value) => value + 1);
+  }, [emptyDocument]);
+
   useEffect(() => {
     const controller = new AbortController();
     setSaveState('loading');
-    void apiFetch(`/api/blueprints?projectPath=${encodeURIComponent(analysis.summary.rootPath)}`, {
-      signal: controller.signal,
-    }).then(async (response) => {
-      const payload = await response.json() as ArchitectureBlueprint | { error: string } | null;
-      if (payload === null) {
+    void (async () => {
+      const listResponse = await apiFetch(`/api/blueprints/documents?projectPath=${encodeURIComponent(analysis.summary.rootPath)}`, { signal: controller.signal });
+      const list = await listResponse.json() as BlueprintDocumentSummary[] | { error: string };
+      if (!listResponse.ok || !Array.isArray(list)) throw new Error('error' in list ? list.error : 'Не удалось загрузить библиотеку blueprint.');
+      if (list.length === 0) {
         documentRef.current = emptyDocument;
         setDocument(emptyDocument);
+        setActiveBlueprintId(null);
+        setBlueprintName('Основной blueprint');
         setSaveState('idle');
         setMessage('Blueprint ещё не создан. Перетащите компонент или импортируйте факт.');
         return;
       }
+      const response = await apiFetch(`/api/blueprints/documents/${list[0].id}?projectPath=${encodeURIComponent(analysis.summary.rootPath)}`, { signal: controller.signal });
+      const payload = await response.json() as BlueprintDocument | { error: string };
       if (!response.ok || 'error' in payload) throw new Error('error' in payload ? payload.error : 'Не удалось загрузить blueprint.');
-      const draft: ArchitectureBlueprintDraft = {
-        version: payload.version,
-        projectPath: payload.projectPath,
-        nodes: payload.nodes,
-        edges: payload.edges,
-      };
-      documentRef.current = draft;
-      setDocument(draft);
-      setUpdatedAt(payload.updatedAt);
-      setDirty(false);
-      setSaveState('saved');
-      setMessage('Blueprint загружен.');
-    }).catch((loadError: unknown) => {
+      openBlueprint(payload);
+    })().catch((loadError: unknown) => {
       if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
       setSaveState('error');
       setMessage(loadError instanceof Error ? loadError.message : 'Не удалось загрузить blueprint.');
     });
     return () => controller.abort();
-  }, [analysis.summary.rootPath, emptyDocument]);
+  }, [analysis.summary.rootPath, emptyDocument, openBlueprint]);
 
   const save = useCallback(async () => {
     const snapshot = documentRef.current;
     setSaveState('saving');
     setMessage('Сохраняем blueprint…');
     try {
-      const response = await apiFetch('/api/blueprints', {
-        method: 'PUT',
+      const response = await apiFetch('/api/blueprints/documents', {
+        method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(snapshot),
+        body: JSON.stringify({ ...(activeBlueprintId ? { id: activeBlueprintId } : {}), name: blueprintName, blueprint: snapshot }),
       });
-      const payload = await response.json() as ArchitectureBlueprint | { error: string };
+      const payload = await response.json() as BlueprintDocument | { error: string };
       if (!response.ok || 'error' in payload) throw new Error('error' in payload ? payload.error : 'Не удалось сохранить blueprint.');
+      setActiveBlueprintId(payload.id);
+      setBlueprintName(payload.name);
       setUpdatedAt(payload.updatedAt);
       if (documentRef.current === snapshot) setDirty(false);
       setSaveState('saved');
@@ -232,7 +299,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       setSaveState('error');
       setMessage(saveError instanceof Error ? saveError.message : 'Не удалось сохранить blueprint.');
     }
-  }, []);
+  }, [activeBlueprintId, blueprintName]);
 
   const addNode = useCallback((kind: BlueprintNodeKind, position?: { x: number; y: number }) => {
     const bounds = canvas.current?.getBoundingClientRect();
@@ -337,6 +404,19 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     planned: document.nodes.filter((node) => !node.actualNodeId || !actualNodeIds.has(node.actualNodeId)).length,
     actual: analysis.nodes.reduce((count, node) => count + (matchedActualIds.has(node.id) ? 0 : 1), 0),
   }), [actualNodeIds, analysis.nodes, document.nodes, matchedActualIds]);
+  const simulationNodeStates = useMemo(() => {
+    const states = new Map<string, 'visited' | 'active' | 'failed'>();
+    if (!simulationResult || simulationStep < 0) return states;
+    simulationResult.steps.slice(0, simulationStep + 1).forEach((step, index) => {
+      states.set(step.nodeId, index === simulationStep ? step.status === 'failed' ? 'failed' : 'active' : 'visited');
+    });
+    return states;
+  }, [simulationResult, simulationStep]);
+  const visibleSimulationEdgeIds = useMemo(() => new Set(
+    simulationResult && simulationStep >= 0
+      ? simulationResult.steps.slice(0, simulationStep + 1).flatMap((step) => step.viaEdgeId ? [step.viaEdgeId] : [])
+      : [],
+  ), [simulationResult, simulationStep]);
 
   const flowNodes = useMemo<Node<BlueprintGraphNodeData>[]>(() => {
     const planned = document.nodes.map((node): Node<BlueprintGraphNodeData> => ({
@@ -353,6 +433,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
         status: node.status,
         subtitle: node.technology || node.language,
         drift: node.actualNodeId && actualNodeIds.has(node.actualNodeId) ? 'matched' : 'planned-only',
+        simulationState: simulationNodeStates.get(node.id),
       },
     }));
     if (!showActual) return planned;
@@ -376,7 +457,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       },
     }));
     return [...ghosts, ...planned];
-  }, [actualLayout.positions, actualNodeIds, document.nodes, selectedNodeIds, showActual, visibleActualOnly]);
+  }, [actualLayout.positions, actualNodeIds, document.nodes, selectedNodeIds, showActual, simulationNodeStates, visibleActualOnly]);
 
   const flowEdges = useMemo<Edge[]>(() => {
     const planned = document.edges.map((edge): Edge => ({
@@ -388,9 +469,10 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       selected: selection?.type === 'edge' && selection.id === edge.id,
       reconnectable: true,
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+      animated: visibleSimulationEdgeIds.has(edge.id),
       style: {
-        stroke: edgeColor(edge.kind),
-        strokeWidth: 1.7,
+        stroke: visibleSimulationEdgeIds.has(edge.id) ? '#7ee2c5' : edgeColor(edge.kind),
+        strokeWidth: visibleSimulationEdgeIds.has(edge.id) ? 2.8 : 1.7,
         strokeDasharray: edge.kind === 'implements' || edge.kind === 'extends' ? '5 3' : undefined,
       },
       labelStyle: { fill: '#718092', fontSize: 8 },
@@ -411,7 +493,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
         style: { stroke: '#7a4b54', strokeWidth: 1, strokeDasharray: '4 5', opacity: 0.46 },
       }));
     return [...ghosts, ...planned];
-  }, [document.edges, selection, showActual, visibleActualEdges, visibleActualOnly]);
+  }, [document.edges, selection, showActual, visibleActualEdges, visibleActualOnly, visibleSimulationEdgeIds]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     const positions = new Map<string, { x: number; y: number }>();
@@ -523,7 +605,10 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
             onFocus={() => void import('./BlueprintPresetLibrary')}
             onClick={() => setPresetLibraryOpen(true)}
           ><span aria-hidden="true">✦</span><strong>Паттерны & пресеты</strong></button>
+          <button type="button" className="blueprint-library-button" onClick={() => setBlueprintLibraryOpen(true)}><span aria-hidden="true">▤</span> {blueprintName}</button>
           <button type="button" className="blueprint-import" onClick={importActual}>Импортировать факт</button>
+          <button type="button" className={simulationOpen ? 'is-active' : ''} disabled={document.nodes.length === 0} onClick={() => { setSimulationOpen((open) => !open); setCodegenOpen(false); }}>▶ Запустить</button>
+          <button type="button" className={codegenOpen ? 'is-active' : ''} disabled={document.nodes.length === 0} onClick={() => { setCodegenOpen((open) => !open); setSimulationOpen(false); }}>⌘ Код</button>
         </div>
         <div className="blueprint-drift" aria-label="Архитектурный drift">
           <span className="is-matched">● {drift.matched} совпадает</span>
@@ -638,6 +723,23 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
         {document.nodes.length === 0 && !showActual ? (
           <div className="blueprint-empty"><strong>Начните с системы или сервиса</strong><span>Перетащите компонент из палитры на карту.</span></div>
         ) : null}
+        {simulationOpen ? (
+          <Suspense fallback={null}>
+            <BlueprintSimulationPanel
+              document={document}
+              result={simulationResult}
+              activeStep={simulationStep}
+              onResult={(result) => { setSimulationResult(result); setSimulationStep(0); }}
+              onSelectStep={setSimulationStep}
+              onClose={() => { setSimulationOpen(false); setSimulationStep(-1); }}
+            />
+          </Suspense>
+        ) : null}
+        {codegenOpen ? (
+          <Suspense fallback={null}>
+            <BlueprintCodegenPanel projectPath={analysis.summary.rootPath} blueprintName={blueprintName} document={document} onClose={() => setCodegenOpen(false)} />
+          </Suspense>
+        ) : null}
       </div>
 
       <aside className="blueprint-inspector">
@@ -663,6 +765,17 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       {presetLibraryOpen ? (
         <Suspense fallback={<div className="preset-library-loading">Загружаем библиотеку паттернов…</div>}>
           <BlueprintPresetLibrary projectPath={analysis.summary.rootPath} onClose={() => setPresetLibraryOpen(false)} onLoad={loadPreset} />
+        </Suspense>
+      ) : null}
+      {blueprintLibraryOpen ? (
+        <Suspense fallback={<div className="preset-library-loading">Загружаем ваши blueprint…</div>}>
+          <BlueprintLibrary
+            projectPath={analysis.summary.rootPath}
+            activeId={activeBlueprintId}
+            onClose={() => setBlueprintLibraryOpen(false)}
+            onOpen={openBlueprint}
+            onNew={startNewBlueprint}
+          />
         </Suspense>
       ) : null}
     </div>
@@ -716,6 +829,18 @@ function NodeEditor({
       <label><span>Технология</span><input maxLength={128} value={draft.technology ?? ''} onChange={(event) => setDraft({ ...draft, technology: event.target.value })} placeholder="Fastify, Spring, Kafka…" /></label>
       <label><span>Язык</span><input maxLength={128} value={draft.language ?? ''} onChange={(event) => setDraft({ ...draft, language: event.target.value })} placeholder="TypeScript, Kotlin…" /></label>
       <label><span>Владелец</span><input maxLength={128} value={draft.owner ?? ''} onChange={(event) => setDraft({ ...draft, owner: event.target.value })} placeholder="Команда или человек" /></label>
+      <fieldset className="blueprint-editor__logic">
+        <legend>Базовая логика</legend>
+        <label><span>Действие при запуске</span><select value={draft.behavior?.kind ?? 'pass'} onChange={(event) => setDraft({ ...draft, behavior: { ...draft.behavior, kind: event.target.value as BlueprintBehaviorKind } })}>{BLUEPRINT_BEHAVIOR_KINDS.map((kind) => <option key={kind} value={kind}>{BEHAVIOR_LABELS[kind]}</option>)}</select></label>
+        {draft.behavior?.kind === 'delay' ? <label><span>Задержка, мс</span><input type="number" min={0} max={60_000} value={draft.behavior.delayMs ?? 250} onChange={(event) => setDraft({ ...draft, behavior: { ...draft.behavior!, delayMs: Number(event.target.value) } })} /></label> : null}
+        {draft.behavior?.kind && !['pass', 'delay'].includes(draft.behavior.kind) ? <label><span>{draft.behavior.kind === 'validate' ? 'Обязательные поля через запятую' : 'Конфигурация / JSON'}</span><textarea maxLength={4_096} rows={3} value={draft.behavior.config ?? ''} onChange={(event) => setDraft({ ...draft, behavior: { ...draft.behavior!, config: event.target.value } })} placeholder={draft.behavior.kind === 'validate' ? 'userId, amount' : '{"status":"ok"}'} /></label> : null}
+      </fieldset>
+      <fieldset className="blueprint-editor__logic blueprint-editor__codegen">
+        <legend>Шаблонный код</legend>
+        <label className="blueprint-editor__check"><input type="checkbox" checked={draft.codegen?.enabled ?? defaultCodegenEnabled(draft.kind)} onChange={(event) => setDraft({ ...draft, codegen: { enabled: event.target.checked, template: draft.codegen?.template ?? 'auto', fileName: draft.codegen?.fileName } })} /><span>Генерировать компонент</span></label>
+        <label><span>Шаблон</span><select value={draft.codegen?.template ?? 'auto'} onChange={(event) => setDraft({ ...draft, codegen: { enabled: draft.codegen?.enabled ?? defaultCodegenEnabled(draft.kind), template: event.target.value as BlueprintCodeTemplate, fileName: draft.codegen?.fileName } })}>{BLUEPRINT_CODE_TEMPLATES.map((template) => <option key={template} value={template}>{CODE_TEMPLATE_LABELS[template]}</option>)}</select></label>
+        <label><span>Имя файла, необязательно</span><input maxLength={128} pattern="[A-Za-z0-9._-]+" value={draft.codegen?.fileName ?? ''} onChange={(event) => setDraft({ ...draft, codegen: { enabled: draft.codegen?.enabled ?? defaultCodegenEnabled(draft.kind), template: draft.codegen?.template ?? 'auto', fileName: event.target.value } })} placeholder="order-service.ts" /></label>
+      </fieldset>
       {draft.actualNodeId ? (
         <div className="blueprint-linked"><span>Связан с фактом</span><code>{draft.actualNodeId}</code><button type="button" onClick={() => applyActualLink(undefined)}>Отвязать</button></div>
       ) : suggestions.length > 0 ? (
@@ -780,7 +905,21 @@ function cleanNode(node: BlueprintNode): BlueprintNode {
     ...(node.technology?.trim() ? { technology: node.technology.trim() } : { technology: undefined }),
     ...(node.language?.trim() ? { language: node.language.trim() } : { language: undefined }),
     ...(node.owner?.trim() ? { owner: node.owner.trim() } : { owner: undefined }),
+    ...(node.behavior ? { behavior: {
+      kind: node.behavior.kind,
+      ...(node.behavior.config?.trim() ? { config: node.behavior.config.trim() } : {}),
+      ...(node.behavior.kind === 'delay' ? { delayMs: Math.max(0, Math.min(60_000, Math.round(node.behavior.delayMs ?? 250))) } : {}),
+    } } : {}),
+    ...(node.codegen ? { codegen: {
+      enabled: node.codegen.enabled,
+      template: node.codegen.template,
+      ...(node.codegen.fileName?.trim() ? { fileName: node.codegen.fileName.trim() } : {}),
+    } } : {}),
   };
+}
+
+function defaultCodegenEnabled(kind: BlueprintNodeKind): boolean {
+  return !['system', 'database', 'cache', 'queue', 'external'].includes(kind);
 }
 
 function cleanEdge(edge: BlueprintEdge): BlueprintEdge {

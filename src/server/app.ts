@@ -9,6 +9,8 @@ import staticFiles from '@fastify/static';
 import type { AnalysisJobPriority, ProjectAnalysis } from '../shared/graph.js';
 import {
   BLUEPRINT_EDGE_KINDS,
+  BLUEPRINT_BEHAVIOR_KINDS,
+  BLUEPRINT_CODE_TEMPLATES,
   BLUEPRINT_NODE_KINDS,
   BLUEPRINT_NODE_STATUSES,
   BLUEPRINT_VERSION,
@@ -18,9 +20,11 @@ import {
   validateArchitectureBlueprint,
   type ArchitectureBlueprintDraft,
 } from '../shared/blueprint.js';
+import type { BlueprintCodegenRequest } from '../shared/blueprint-codegen.js';
 import type { RequestProbeInput, RequestProbeResult } from '../shared/request-trace.js';
 import { AnalysisQueue } from './analysis-queue.js';
 import { AnalysisError, analyzeProject, type AnalyzeProjectOptions } from './analyzer.js';
+import { BlueprintCodegenError, generateBlueprintCode } from './blueprint-codegen.js';
 import { executeRequestProbe, RequestProbeValidationError } from './request-probe.js';
 import {
   createDemoOtlpPayload,
@@ -54,7 +58,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   await app.register(cors, {
     origin: /^(?:https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?|tauri:\/\/localhost|https?:\/\/tauri\.localhost)$/,
     allowedHeaders: ['content-type', 'x-code-atlas-token', 'x-code-atlas-otlp-token'],
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, { global: false });
@@ -281,6 +285,76 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     return snapshots.saveBlueprint(request.body);
   });
 
+  app.get<{ Querystring: { projectPath: string } }>('/api/blueprints/documents', {
+    schema: { querystring: blueprintQuerySchema },
+  }, async (request) => snapshots.listBlueprintDocuments(request.query.projectPath));
+
+  app.get<{ Params: { id: string }; Querystring: { projectPath: string } }>('/api/blueprints/documents/:id', {
+    schema: { params: identifierParamsSchema, querystring: blueprintQuerySchema },
+  }, async (request, reply) => {
+    const document = snapshots.getBlueprintDocument(request.query.projectPath, request.params.id);
+    return document ?? reply.status(404).send({ error: 'Blueprint не найден.' });
+  });
+
+  app.post<{ Body: { id?: string; name: string; blueprint: ArchitectureBlueprintDraft } }>('/api/blueprints/documents', {
+    bodyLimit: MAX_BLUEPRINT_JSON_SIZE,
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    schema: { body: blueprintDocumentSaveSchema },
+  }, async (request, reply) => {
+    const validationError = validateArchitectureBlueprint(request.body.blueprint);
+    if (validationError) return reply.status(400).send({ error: validationError });
+    try {
+      const document = snapshots.saveBlueprintDocument(request.body.name, request.body.blueprint, request.body.id);
+      return reply.status(request.body.id ? 200 : 201).send(document);
+    } catch (error) {
+      return reply.status(400).send({ error: error instanceof Error ? error.message : 'Не удалось сохранить blueprint.' });
+    }
+  });
+
+  app.patch<{ Params: { id: string }; Body: { projectPath: string; name: string } }>('/api/blueprints/documents/:id', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    schema: { params: identifierParamsSchema, body: blueprintDocumentActionSchema },
+  }, async (request, reply) => {
+    try {
+      const document = snapshots.renameBlueprintDocument(request.body.projectPath, request.params.id, request.body.name);
+      return document ?? reply.status(404).send({ error: 'Blueprint не найден.' });
+    } catch (error) {
+      return reply.status(400).send({ error: error instanceof Error ? error.message : 'Не удалось переименовать blueprint.' });
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: { projectPath: string; name: string } }>('/api/blueprints/documents/:id/duplicate', {
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+    schema: { params: identifierParamsSchema, body: blueprintDocumentActionSchema },
+  }, async (request, reply) => {
+    try {
+      const document = snapshots.duplicateBlueprintDocument(request.body.projectPath, request.params.id, request.body.name);
+      return document ? reply.status(201).send(document) : reply.status(404).send({ error: 'Blueprint не найден.' });
+    } catch (error) {
+      return reply.status(400).send({ error: error instanceof Error ? error.message : 'Не удалось дублировать blueprint.' });
+    }
+  });
+
+  app.delete<{ Params: { id: string }; Querystring: { projectPath: string } }>('/api/blueprints/documents/:id', {
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+    schema: { params: identifierParamsSchema, querystring: blueprintQuerySchema },
+  }, async (request, reply) => snapshots.deleteBlueprintDocument(request.query.projectPath, request.params.id)
+    ? reply.status(204).send()
+    : reply.status(404).send({ error: 'Blueprint не найден.' }));
+
+  app.post<{ Body: BlueprintCodegenRequest }>('/api/blueprints/generate', {
+    bodyLimit: MAX_BLUEPRINT_JSON_SIZE,
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    schema: { body: blueprintCodegenSchema },
+  }, async (request, reply) => {
+    try {
+      return await generateBlueprintCode(request.body);
+    } catch (error) {
+      if (error instanceof BlueprintCodegenError) return reply.status(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AnalysisError) {
       return reply.status(error.statusCode).send({ error: error.message });
@@ -410,6 +484,26 @@ const blueprintSchema = {
           language: { type: 'string', maxLength: 128, pattern: '^[^\\u0000\\r\\n]*$' },
           owner: { type: 'string', maxLength: 128, pattern: '^[^\\u0000\\r\\n]*$' },
           actualNodeId: { type: 'string', minLength: 1, maxLength: 1_024, pattern: '^[^\\u0000\\r\\n]+$' },
+          behavior: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['kind'],
+            properties: {
+              kind: { type: 'string', enum: BLUEPRINT_BEHAVIOR_KINDS },
+              config: { type: 'string', maxLength: 4_096, pattern: '^[^\\u0000]*$' },
+              delayMs: { type: 'integer', minimum: 0, maximum: 60_000 },
+            },
+          },
+          codegen: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['enabled', 'template'],
+            properties: {
+              enabled: { type: 'boolean' },
+              template: { type: 'string', enum: BLUEPRINT_CODE_TEMPLATES },
+              fileName: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$' },
+            },
+          },
         },
       },
     },
@@ -429,5 +523,38 @@ const blueprintSchema = {
         },
       },
     },
+  },
+} as const;
+
+const blueprintDocumentSaveSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['name', 'blueprint'],
+  properties: {
+    id: identifierParamsSchema.properties.id,
+    name: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[^\\u0000\\r\\n]+$' },
+    blueprint: blueprintSchema,
+  },
+} as const;
+
+const blueprintDocumentActionSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['projectPath', 'name'],
+  properties: {
+    projectPath: blueprintQuerySchema.properties.projectPath,
+    name: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[^\\u0000\\r\\n]+$' },
+  },
+} as const;
+
+const blueprintCodegenSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['projectPath', 'blueprintName', 'outputDirectory', 'blueprint'],
+  properties: {
+    projectPath: blueprintQuerySchema.properties.projectPath,
+    blueprintName: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[^\\u0000\\r\\n]+$' },
+    outputDirectory: { type: 'string', minLength: 1, maxLength: 512, pattern: '^[A-Za-z0-9._\\/\\\\-]+$' },
+    blueprint: blueprintSchema,
   },
 } as const;

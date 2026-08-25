@@ -9,6 +9,8 @@ import {
   validateArchitectureBlueprint,
   type ArchitectureBlueprint,
   type ArchitectureBlueprintDraft,
+  type BlueprintDocument,
+  type BlueprintDocumentSummary,
 } from '../shared/blueprint.js';
 import {
   MAX_PARSE_CACHE_JSON_SIZE,
@@ -48,6 +50,15 @@ interface RuntimeTraceRow {
   error_count: number;
   service_names_json: string;
   trace_json?: string;
+}
+
+interface BlueprintDocumentRow {
+  id: string;
+  project_path: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  blueprint_json: string;
 }
 
 export class SnapshotStore implements ParseCache {
@@ -92,6 +103,16 @@ export class SnapshotStore implements ParseCache {
         updated_at TEXT NOT NULL,
         blueprint_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS architecture_blueprint_documents (
+        id TEXT PRIMARY KEY,
+        project_path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        blueprint_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS architecture_blueprint_documents_project_updated
+        ON architecture_blueprint_documents(project_path, updated_at DESC);
       CREATE TABLE IF NOT EXISTS runtime_traces (
         id TEXT PRIMARY KEY,
         project_path TEXT NOT NULL,
@@ -260,6 +281,114 @@ export class SnapshotStore implements ParseCache {
     }
   }
 
+  listBlueprintDocuments(projectPath: string): BlueprintDocumentSummary[] {
+    this.migrateLegacyBlueprint(projectPath);
+    const rows = this.database.prepare(`
+      SELECT id, project_path, name, created_at, updated_at, blueprint_json
+      FROM architecture_blueprint_documents
+      WHERE project_path = ?
+      ORDER BY updated_at DESC, rowid DESC
+    `).all(projectPath) as unknown as BlueprintDocumentRow[];
+    return rows.flatMap((row) => {
+      const blueprint = parseStoredBlueprint(row.blueprint_json);
+      return blueprint ? [{
+        id: row.id,
+        projectPath: row.project_path,
+        name: row.name,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        nodeCount: blueprint.nodes.length,
+        edgeCount: blueprint.edges.length,
+      }] : [];
+    });
+  }
+
+  getBlueprintDocument(projectPath: string, id: string): BlueprintDocument | null {
+    this.migrateLegacyBlueprint(projectPath);
+    const row = this.database.prepare(`
+      SELECT id, project_path, name, created_at, updated_at, blueprint_json
+      FROM architecture_blueprint_documents
+      WHERE project_path = ? AND id = ?
+    `).get(projectPath, id) as unknown as BlueprintDocumentRow | undefined;
+    if (!row) return null;
+    const blueprint = parseStoredBlueprint(row.blueprint_json);
+    return blueprint ? {
+      ...blueprint,
+      id: row.id,
+      name: row.name,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    } : null;
+  }
+
+  saveBlueprintDocument(name: string, draft: ArchitectureBlueprintDraft, id?: string): BlueprintDocument {
+    const normalizedName = validateBlueprintName(name);
+    const validationError = validateArchitectureBlueprint(draft);
+    if (validationError) throw new Error(validationError);
+    const serialized = JSON.stringify(draft);
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_BLUEPRINT_JSON_SIZE) throw new Error('Blueprint слишком большой.');
+    const documentId = id ?? randomUUID();
+    const existing = this.database.prepare(`
+      SELECT project_path, created_at FROM architecture_blueprint_documents WHERE id = ?
+    `).get(documentId) as { project_path?: unknown; created_at?: unknown } | undefined;
+    if (typeof existing?.project_path === 'string' && existing.project_path !== draft.projectPath) {
+      throw new Error('Blueprint относится к другому проекту.');
+    }
+    const now = new Date().toISOString();
+    const createdAt = typeof existing?.created_at === 'string' ? existing.created_at : now;
+    this.database.prepare(`
+      INSERT INTO architecture_blueprint_documents (id, project_path, name, created_at, updated_at, blueprint_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        updated_at = excluded.updated_at,
+        blueprint_json = excluded.blueprint_json
+    `).run(documentId, draft.projectPath, normalizedName, createdAt, now, serialized);
+    return { ...draft, id: documentId, name: normalizedName, createdAt, updatedAt: now };
+  }
+
+  renameBlueprintDocument(projectPath: string, id: string, name: string): BlueprintDocument | null {
+    const normalizedName = validateBlueprintName(name);
+    const updatedAt = new Date().toISOString();
+    const result = this.database.prepare(`
+      UPDATE architecture_blueprint_documents SET name = ?, updated_at = ?
+      WHERE project_path = ? AND id = ?
+    `).run(normalizedName, updatedAt, projectPath, id);
+    return result.changes > 0 ? this.getBlueprintDocument(projectPath, id) : null;
+  }
+
+  duplicateBlueprintDocument(projectPath: string, id: string, name: string): BlueprintDocument | null {
+    const source = this.getBlueprintDocument(projectPath, id);
+    if (!source) return null;
+    return this.saveBlueprintDocument(name, {
+      version: source.version,
+      projectPath: source.projectPath,
+      nodes: source.nodes,
+      edges: source.edges,
+    });
+  }
+
+  deleteBlueprintDocument(projectPath: string, id: string): boolean {
+    return this.database.prepare(`
+      DELETE FROM architecture_blueprint_documents WHERE project_path = ? AND id = ?
+    `).run(projectPath, id).changes > 0;
+  }
+
+  private migrateLegacyBlueprint(projectPath: string): void {
+    const existing = this.database.prepare(`
+      SELECT 1 FROM architecture_blueprint_documents WHERE project_path = ? LIMIT 1
+    `).get(projectPath);
+    if (existing) return;
+    const legacy = this.getBlueprint(projectPath);
+    if (!legacy) return;
+    this.saveBlueprintDocument('Основной blueprint', {
+      version: legacy.version,
+      projectPath: legacy.projectPath,
+      nodes: legacy.nodes,
+      edges: legacy.edges,
+    });
+  }
+
   saveRuntimeTraces(sessions: RuntimeTraceSession[]): RuntimeTraceSummary[] {
     if (!sessions.length) return [];
     const insert = this.database.prepare(`
@@ -346,6 +475,21 @@ function toSummary(row: SnapshotRow): AnalysisSnapshotSummary {
     edgeCount: row.edge_count,
     durationMs: row.duration_ms,
   };
+}
+
+function parseStoredBlueprint(serialized: string): ArchitectureBlueprintDraft | null {
+  try {
+    const parsed: unknown = JSON.parse(serialized);
+    return validateArchitectureBlueprint(parsed) ? null : parsed as ArchitectureBlueprintDraft;
+  } catch {
+    return null;
+  }
+}
+
+function validateBlueprintName(name: string): string {
+  const normalized = name.trim();
+  if (!normalized || normalized.length > 128 || /[\0\r\n]/.test(normalized)) throw new Error('Некорректное название blueprint.');
+  return normalized;
 }
 
 function toRuntimeTraceSummary(row: RuntimeTraceRow): RuntimeTraceSummary {

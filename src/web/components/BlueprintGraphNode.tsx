@@ -10,6 +10,7 @@ export interface BlueprintGraphNodeData extends Record<string, unknown> {
   subtitle?: string;
   drift: BlueprintDriftState;
   readOnly?: boolean;
+  simulationState?: 'visited' | 'active' | 'failed';
 }
 
 const KIND_ICON: Record<BlueprintNodeKind, string> = {
@@ -38,7 +39,7 @@ const DRIFT_LABEL: Record<BlueprintDriftState, string> = {
 export function BlueprintGraphNode({ data, selected }: NodeProps) {
   const node = data as BlueprintGraphNodeData;
   return (
-    <div className={`blueprint-node blueprint-node--${node.kind} blueprint-node--${node.drift} ${selected ? 'is-selected' : ''}`}>
+    <div className={`blueprint-node blueprint-node--${node.kind} blueprint-node--${node.drift} ${selected ? 'is-selected' : ''} ${node.simulationState ? `is-simulation-${node.simulationState}` : ''}`}>
       <Handle type="target" position={Position.Left} className="blueprint-handle" />
       <div className="blueprint-node__icon" aria-hidden="true">{KIND_ICON[node.kind]}</div>
       <div className="blueprint-node__body">
