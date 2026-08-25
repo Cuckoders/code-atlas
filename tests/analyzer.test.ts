@@ -33,6 +33,12 @@ describe('analyzeProject', () => {
       && nodeById.get(edge.source)?.label === 'registerCatalogRoutes'
       && nodeById.get(edge.target)?.label === 'ProductRepository'
     ))).toBe(true);
+    expect(result.edges.some((edge) => (
+      edge.kind === 'calls'
+      && nodeById.get(edge.source)?.label === 'InventoryController'
+      && nodeById.get(edge.target)?.label === 'InventoryService'
+      && edge.label?.includes('.reserve')
+    ))).toBe(true);
     expect(result.diagnostics.some((diagnostic) => diagnostic.kind === 'isolated-module')).toBe(true);
   });
 
@@ -77,5 +83,46 @@ describe('analyzeProject', () => {
     expect(progress).toContainEqual({ phase: 'parsing', processedFiles: 4, totalFiles: 4, percentage: 100 });
     expect(progress.at(-1)).toEqual({ phase: 'finalizing', processedFiles: 1, totalFiles: 1, percentage: 100 });
     expect(progress.every((update) => update.percentage >= 0 && update.percentage <= 100)).toBe(true);
+  });
+
+  it('resolves Tree-sitter calls across Java imports and Go package files', async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'code-atlas-polyglot-calls-'));
+    try {
+      const javaRoot = path.join(temporaryRoot, 'java-service');
+      const goRoot = path.join(temporaryRoot, 'go-service');
+      await fs.mkdir(path.join(javaRoot, 'src', 'demo'), { recursive: true });
+      await fs.mkdir(goRoot, { recursive: true });
+      await fs.writeFile(path.join(javaRoot, 'pom.xml'), '<project />');
+      await fs.writeFile(path.join(javaRoot, 'src', 'demo', 'InventoryService.java'), `
+        package demo;
+        public class InventoryService { public void reserve() {} }
+      `);
+      await fs.writeFile(path.join(javaRoot, 'src', 'demo', 'InventoryController.java'), `
+        package demo;
+        import demo.InventoryService;
+        public class InventoryController {
+          private InventoryService service;
+          public void submit() { this.service.reserve(); }
+        }
+      `);
+      await fs.writeFile(path.join(goRoot, 'go.mod'), 'module example.com/orders\n');
+      await fs.writeFile(path.join(goRoot, 'persist.go'), 'package orders\nfunc Persist() {}\n');
+      await fs.writeFile(path.join(goRoot, 'run.go'), 'package orders\nfunc Run() { Persist() }\n');
+
+      const result = await analyzeProject(temporaryRoot);
+      const nodeById = new Map(result.nodes.map((node) => [node.id, node]));
+      const calls = result.edges.filter((edge) => edge.kind === 'calls').map((edge) => ({
+        source: nodeById.get(edge.source)?.label,
+        target: nodeById.get(edge.target)?.label,
+        label: edge.label,
+      }));
+
+      expect(calls).toEqual(expect.arrayContaining([
+        expect.objectContaining({ source: 'InventoryController', target: 'InventoryService', label: expect.stringContaining('.reserve') }),
+        expect.objectContaining({ source: 'Run', target: 'Persist' }),
+      ]));
+    } finally {
+      await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
   });
 });

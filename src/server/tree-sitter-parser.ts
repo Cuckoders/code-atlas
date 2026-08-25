@@ -13,6 +13,7 @@ export interface ParsedSource {
   calls: Array<{
     sourceSymbol: string;
     targetSymbol: string;
+    targetMember?: string;
     importSpecifier?: string;
     line: number;
   }>;
@@ -148,15 +149,273 @@ function extractSource(root: SyntaxNode, grammar: GrammarConfig): ParsedSource {
   visit(root);
   attachRustImplMethods(root, grammar, symbols);
   attachGoMethods(root, grammar, symbols);
+  const uniqueImports = [...new Set(imports)];
 
   return {
     symbols,
-    imports: [...new Set(imports)],
-    calls: [],
+    imports: uniqueImports,
+    calls: collectCalls(root, grammar, uniqueImports),
     namespace: extractNamespace(root.text, grammar.name),
     routes: [],
     parser: `Tree-sitter WASM · ${grammar.name}`,
   };
+}
+
+const MAX_CALLS_PER_FILE = 5_000;
+const CALL_NODE_TYPES: Record<string, Set<string>> = {
+  java: new Set(['method_invocation', 'object_creation_expression']),
+  go: new Set(['call_expression']),
+  rust: new Set(['call_expression']),
+  'c-sharp': new Set(['invocation_expression', 'object_creation_expression']),
+  php: new Set(['function_call_expression', 'member_call_expression', 'scoped_call_expression', 'object_creation_expression']),
+};
+
+function collectCalls(
+  root: SyntaxNode,
+  grammar: GrammarConfig,
+  imports: string[],
+): ParsedSource['calls'] {
+  const calls: ParsedSource['calls'] = [];
+  const seen = new Set<string>();
+  const importBindings = createImportBindings(root.text, imports, grammar.name);
+  const variableTypes = collectVariableTypes(root.text, grammar.name);
+  const callTypes = CALL_NODE_TYPES[grammar.name] ?? new Set<string>();
+
+  function add(
+    sourceSymbol: string | undefined,
+    targetSymbol: string | undefined,
+    node: SyntaxNode,
+    targetMember?: string,
+    explicitImport?: string,
+  ): void {
+    if (!sourceSymbol || !targetSymbol || calls.length >= MAX_CALLS_PER_FILE) return;
+    const safeSource = identifier(sourceSymbol);
+    const safeTarget = identifier(targetSymbol);
+    const safeMember = targetMember ? identifier(targetMember) : undefined;
+    if (!safeSource || !safeTarget || safeSource === safeTarget && !safeMember) return;
+    const importSpecifier = explicitImport ?? importForTarget(safeTarget, imports, importBindings, grammar.name);
+    const line = node.startPosition.row + 1;
+    const key = `${safeSource}:${safeTarget}:${safeMember ?? ''}:${importSpecifier ?? ''}:${line}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    calls.push({
+      sourceSymbol: safeSource,
+      targetSymbol: safeTarget,
+      ...(safeMember ? { targetMember: safeMember } : {}),
+      ...(importSpecifier ? { importSpecifier } : {}),
+      line,
+    });
+  }
+
+  function visit(node: SyntaxNode, sourceSymbol?: string, insideType = false): void {
+    let nextSource = sourceSymbol;
+    let nextInsideType = insideType;
+
+    if (grammar.declarationTypes.has(node.type) || grammar.interfaceTypes.has(node.type)) {
+      nextSource = getNodeName(node) ?? nextSource;
+      nextInsideType = true;
+    } else if (grammar.name === 'rust' && node.type === 'impl_item') {
+      nextSource = simpleTypeName(node.childForFieldName('type')?.text);
+      nextInsideType = true;
+    } else if (grammar.name === 'go' && node.type === 'method_declaration') {
+      nextSource = goReceiverType(node) ?? nextSource;
+      nextInsideType = true;
+    } else if (!insideType && grammar.functionTypes.has(node.type)) {
+      nextSource = getNodeName(node) ?? nextSource;
+    }
+
+    if (callTypes.has(node.type)) {
+      const resolved = resolveCall(node, grammar.name, importBindings, variableTypes);
+      if (resolved) add(nextSource, resolved.targetSymbol, node, resolved.targetMember, resolved.importSpecifier);
+    }
+
+    for (const child of node.namedChildren) visit(child, nextSource, nextInsideType);
+  }
+
+  visit(root);
+  return calls;
+}
+
+interface ResolvedCall {
+  targetSymbol: string;
+  targetMember?: string;
+  importSpecifier?: string;
+}
+
+function resolveCall(
+  node: SyntaxNode,
+  language: string,
+  importBindings: Map<string, string>,
+  variableTypes: Map<string, string>,
+): ResolvedCall | null {
+  if (node.type === 'object_creation_expression') {
+    const targetSymbol = simpleTypeName(
+      node.childForFieldName('type')?.text
+      ?? node.namedChildren.find((child) => /type|name/.test(child.type))?.text,
+    );
+    return targetSymbol ? {
+      targetSymbol,
+      targetMember: 'constructor',
+      ...(importBindings.get(targetSymbol) ? { importSpecifier: importBindings.get(targetSymbol) } : {}),
+    } : null;
+  }
+
+  if (language === 'java') {
+    const targetMember = identifier(node.childForFieldName('name')?.text);
+    const qualifier = node.childForFieldName('object')?.text;
+    return qualifier && targetMember
+      ? resolveQualifiedCall(qualifier, targetMember, language, importBindings, variableTypes)
+      : targetMember ? resolveBareCall(targetMember, importBindings) : null;
+  }
+
+  if (language === 'php' && (node.type === 'member_call_expression' || node.type === 'scoped_call_expression')) {
+    const targetMember = identifier(node.childForFieldName('name')?.text);
+    const qualifier = node.childForFieldName('object')?.text ?? node.childForFieldName('scope')?.text;
+    return qualifier && targetMember
+      ? resolveQualifiedCall(qualifier, targetMember, language, importBindings, variableTypes)
+      : null;
+  }
+
+  const callable = node.childForFieldName('function')
+    ?? node.childForFieldName('name')
+    ?? node.namedChildren[0];
+  if (!callable) return null;
+
+  if (callable.type === 'identifier' || /(?:name|identifier)$/.test(callable.type) && !/[.:\\]/.test(callable.text)) {
+    const target = identifier(callable.text);
+    return target ? resolveBareCall(target, importBindings) : null;
+  }
+
+  if (language === 'rust' && callable.type === 'scoped_identifier') {
+    const segments = callable.text.split('::').filter(Boolean);
+    const targetSymbol = identifier(segments.at(-1));
+    return targetSymbol ? { targetSymbol, importSpecifier: callable.text } : null;
+  }
+
+  const targetMember = identifier(
+    callable.childForFieldName('field')?.text
+    ?? callable.childForFieldName('name')?.text
+    ?? callable.namedChildren.at(-1)?.text,
+  );
+  const qualifier = callable.childForFieldName('operand')?.text
+    ?? callable.childForFieldName('object')?.text
+    ?? callable.childForFieldName('expression')?.text
+    ?? callable.childForFieldName('scope')?.text
+    ?? callable.namedChildren[0]?.text;
+  return qualifier && targetMember
+    ? resolveQualifiedCall(qualifier, targetMember, language, importBindings, variableTypes)
+    : null;
+}
+
+function resolveBareCall(targetSymbol: string, importBindings: Map<string, string>): ResolvedCall {
+  const importSpecifier = importBindings.get(targetSymbol);
+  return { targetSymbol, ...(importSpecifier ? { importSpecifier } : {}) };
+}
+
+function resolveQualifiedCall(
+  rawQualifier: string,
+  targetMember: string,
+  language: string,
+  importBindings: Map<string, string>,
+  variableTypes: Map<string, string>,
+): ResolvedCall | null {
+  const qualifier = qualifierIdentifier(rawQualifier);
+  if (!qualifier) return null;
+  const importedPackage = importBindings.get(qualifier);
+  if (language === 'go' && importedPackage) {
+    return { targetSymbol: targetMember, importSpecifier: importedPackage };
+  }
+  const targetSymbol = variableTypes.get(qualifier) ?? simpleTypeName(rawQualifier);
+  if (!targetSymbol) return null;
+  const importSpecifier = importBindings.get(targetSymbol);
+  return {
+    targetSymbol,
+    targetMember,
+    ...(importSpecifier ? { importSpecifier } : {}),
+  };
+}
+
+function qualifierIdentifier(value: string): string | undefined {
+  const candidates = value.match(/[A-Za-z_]\w*/g) ?? [];
+  const candidate = candidates.filter((item) => item !== 'this' && item !== 'self').at(-1);
+  return identifier(candidate);
+}
+
+function createImportBindings(content: string, imports: string[], language: string): Map<string, string> {
+  const bindings = new Map<string, string>();
+  for (const specifier of imports) {
+    const normalized = specifier.replace(/\s+as\s+\w+$/i, '').replace(/\.\*$/, '');
+    const name = identifier(normalized.split(/(?:\.|::|\\|\/)/).at(-1));
+    if (name && name !== '*') bindings.set(name, specifier);
+  }
+  if (language === 'go') {
+    for (const match of content.matchAll(/\b([A-Za-z_]\w*)\s+["`]([^"`]+)["`]/g)) {
+      if (match[1] !== 'import') bindings.set(match[1], match[2]);
+    }
+  }
+  if (language === 'php') {
+    for (const match of content.matchAll(/\buse\s+[^;]+\\([A-Za-z_]\w*)\s+as\s+([A-Za-z_]\w*)\s*;/gi)) {
+      const specifier = imports.find((item) => item.includes(match[1]));
+      if (specifier) bindings.set(match[2], specifier);
+    }
+  }
+  return bindings;
+}
+
+function importForTarget(
+  targetSymbol: string,
+  imports: string[],
+  bindings: Map<string, string>,
+  language: string,
+): string | undefined {
+  const direct = bindings.get(targetSymbol);
+  if (direct) return direct;
+  if (language !== 'c-sharp') return undefined;
+  const projectNamespaces = imports.filter((item) => !/^(?:System|Microsoft)(?:\.|$)/.test(item));
+  return projectNamespaces.length === 1 ? projectNamespaces[0] : undefined;
+}
+
+function collectVariableTypes(content: string, language: string): Map<string, string> {
+  const variables = new Map<string, string>();
+  const add = (name: string | undefined, type: string | undefined) => {
+    const safeName = identifier(name?.replace(/^\$/, ''));
+    const safeType = simpleTypeName(type);
+    if (safeName && safeType) variables.set(safeName, safeType);
+  };
+
+  if (language === 'java' || language === 'c-sharp') {
+    for (const match of content.matchAll(/\b([A-Z][A-Za-z0-9_.]*(?:\s*<[^;=(){}]+>)?(?:\[\])?)\s+([a-z_]\w*)\b/g)) {
+      add(match[2], match[1]);
+    }
+  } else if (language === 'go') {
+    for (const match of content.matchAll(/\bvar\s+([A-Za-z_]\w*)\s+\*?([A-Za-z_]\w*)/g)) add(match[1], match[2]);
+    for (const match of content.matchAll(/\b([A-Za-z_]\w*)\s*:=\s*&?([A-Za-z_]\w*)\s*[({]/g)) add(match[1], match[2]);
+    for (const match of content.matchAll(/\b([A-Za-z_]\w*)\s+\*?([A-Z][A-Za-z0-9_]*)\b/g)) add(match[1], match[2]);
+  } else if (language === 'rust') {
+    for (const match of content.matchAll(/\blet\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::\s*&?(?:mut\s+)?([A-Za-z_]\w*))?\s*=\s*([A-Za-z_]\w*)::/g)) {
+      add(match[1], match[2] ?? match[3]);
+    }
+    for (const match of content.matchAll(/\b([A-Za-z_]\w*)\s*:\s*&?(?:mut\s+)?([A-Z][A-Za-z0-9_]*)/g)) add(match[1], match[2]);
+  } else if (language === 'php') {
+    for (const match of content.matchAll(/\$([A-Za-z_]\w*)\s*=\s*new\s+([A-Za-z_\\][A-Za-z0-9_\\]*)/gi)) add(match[1], match[2]);
+    for (const match of content.matchAll(/([A-Za-z_\\][A-Za-z0-9_\\]*)\s+\$([A-Za-z_]\w*)/g)) add(match[2], match[1]);
+  }
+  return variables;
+}
+
+function goReceiverType(node: SyntaxNode): string | undefined {
+  return simpleTypeName(node.childForFieldName('receiver')?.text);
+}
+
+function simpleTypeName(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const withoutGenerics = value.replace(/<[^<>]*>/g, '');
+  return identifier(withoutGenerics.match(/[A-Za-z_]\w*/g)?.at(-1));
+}
+
+function identifier(value: string | undefined): string | undefined {
+  const match = value?.trim().match(/^[A-Za-z_]\w*$/);
+  return match && match[0].length <= 200 ? match[0] : undefined;
 }
 
 function extractNamespace(content: string, language: string): string | undefined {

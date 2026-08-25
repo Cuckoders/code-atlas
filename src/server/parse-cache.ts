@@ -1,7 +1,7 @@
 import type { NodeKind, SymbolMember } from '../shared/graph.js';
 import type { ParsedSource } from './tree-sitter-parser.js';
 
-export const PARSER_CACHE_VERSION = 1;
+export const PARSER_CACHE_VERSION = 2;
 export const MAX_PARSE_CACHE_JSON_SIZE = 2 * 1024 * 1024;
 
 export interface ParseCache {
@@ -51,6 +51,7 @@ function isParsedSource(value: unknown): value is ParsedSource {
       isRecord(call)
       && typeof call.sourceSymbol === 'string'
       && typeof call.targetSymbol === 'string'
+      && (call.targetMember === undefined || typeof call.targetMember === 'string')
       && (call.importSpecifier === undefined || typeof call.importSpecifier === 'string')
       && Number.isInteger(call.line)
     ))

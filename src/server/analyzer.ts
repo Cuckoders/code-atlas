@@ -96,6 +96,7 @@ interface PendingCall {
   sourceModule: string;
   sourceSymbol: string;
   targetSymbol: string;
+  targetMember?: string;
   importSpecifier?: string;
   line: number;
 }
@@ -337,6 +338,7 @@ async function buildProjectAnalysis(
       sourceModule: moduleId,
       sourceSymbol: call.sourceSymbol,
       targetSymbol: call.targetSymbol,
+      targetMember: call.targetMember,
       importSpecifier: call.importSpecifier,
       line: call.line,
     }));
@@ -358,9 +360,12 @@ async function buildProjectAnalysis(
     const targetModuleId = item.importSpecifier
       ? resolveLocalImport(sourceModule.relativePath, item.importSpecifier, moduleIds, modules, services)
       : sourceModule.id;
-    const target = targetModuleId ? modules.get(targetModuleId)?.symbolIds.get(item.targetSymbol) : undefined;
+    const target = resolveCallTarget(sourceModule, targetModuleId, item.targetSymbol, modules);
     if (target && target !== source) {
-      edges.push(edge(source, target, 'calls', `${item.targetSymbol} · строка ${item.line}`));
+      const label = `${item.targetSymbol}${item.targetMember ? `.${item.targetMember}` : ''} · строка ${item.line}`;
+      const callEdge = edge(source, target, 'calls', label);
+      callEdge.id = `${callEdge.id}:${item.targetMember ?? item.targetSymbol}:${item.line}`;
+      if (!edges.some((item) => item.id === callEdge.id)) edges.push(callEdge);
     }
   }
 
@@ -1100,6 +1105,27 @@ function resolveLocalImport(
     modulePath === asPath || modulePath.endsWith(`/${asPath}`)
   ));
   return suffixMatches.length === 1 ? suffixMatches[0][1] : undefined;
+}
+
+function resolveCallTarget(
+  sourceModule: ModuleInfo,
+  targetModuleId: string | undefined,
+  targetSymbol: string,
+  modules: Map<string, ModuleInfo>,
+): string | undefined {
+  const direct = targetModuleId ? modules.get(targetModuleId)?.symbolIds.get(targetSymbol) : undefined;
+  if (direct) return direct;
+  if (targetModuleId && targetModuleId !== sourceModule.id) return undefined;
+
+  const sourceDirectory = path.posix.dirname(sourceModule.relativePath);
+  const candidates = [...modules.values()].filter((module) => (
+    module.ownerId === sourceModule.ownerId
+    && module.symbolIds.has(targetSymbol)
+    && (sourceModule.namespace && module.namespace
+      ? sourceModule.namespace === module.namespace
+      : path.posix.dirname(module.relativePath) === sourceDirectory)
+  ));
+  return candidates.length === 1 ? candidates[0].symbolIds.get(targetSymbol) : undefined;
 }
 
 function ascendDirectory(directory: string, levels: number): string {

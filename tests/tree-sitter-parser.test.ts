@@ -77,4 +77,74 @@ describe('Tree-sitter WASM adapters', () => {
       expect(symbol?.members.some((member) => member.name === testCase.method)).toBe(true);
     });
   }
+
+  const callCases = [
+    {
+      language: 'Java',
+      extension: '.java',
+      source: `
+        package demo;
+        class InventoryService { void reserve() {} }
+        class InventoryController {
+          InventoryService service;
+          void submit() { this.service.reserve(); }
+        }
+      `,
+      expected: { sourceSymbol: 'InventoryController', targetSymbol: 'InventoryService', targetMember: 'reserve' },
+    },
+    {
+      language: 'Go',
+      extension: '.go',
+      source: `
+        package orders
+        func persist() {}
+        func Run() { persist() }
+      `,
+      expected: { sourceSymbol: 'Run', targetSymbol: 'persist' },
+    },
+    {
+      language: 'Rust',
+      extension: '.rs',
+      source: `
+        fn quote() -> i32 { 1 }
+        fn run() { quote(); }
+      `,
+      expected: { sourceSymbol: 'run', targetSymbol: 'quote' },
+    },
+    {
+      language: 'C#',
+      extension: '.cs',
+      source: `
+        class PaymentService { public void Charge() {} }
+        class PaymentController {
+          PaymentService service;
+          public void Capture() { this.service.Charge(); }
+        }
+      `,
+      expected: { sourceSymbol: 'PaymentController', targetSymbol: 'PaymentService', targetMember: 'Charge' },
+    },
+    {
+      language: 'PHP',
+      extension: '.php',
+      source: `<?php
+        class OrderService { public function save(): void {} }
+        class OrderController {
+          public function submit(): void {
+            $service = new OrderService();
+            $service->save();
+          }
+        }
+      `,
+      expected: { sourceSymbol: 'OrderController', targetSymbol: 'OrderService', targetMember: 'save' },
+    },
+  ] as const;
+
+  for (const testCase of callCases) {
+    it(`extracts conservative ${testCase.language} call targets`, async () => {
+      const result = await parseWithTreeSitter(testCase.extension, testCase.source);
+      expect(result?.calls).toEqual(expect.arrayContaining([
+        expect.objectContaining(testCase.expected),
+      ]));
+    });
+  }
 });
