@@ -9,9 +9,20 @@ interface BlueprintSimulationPanelProps {
   onResult: (result: BlueprintSimulationResult) => void;
   onSelectStep: (index: number) => void;
   onClose: () => void;
+  mode?: 'combined' | 'request' | 'trace';
+  onModeChange?: (mode: 'request' | 'trace') => void;
 }
 
-export default function BlueprintSimulationPanel({ document, result, activeStep, onResult, onSelectStep, onClose }: BlueprintSimulationPanelProps) {
+export default function BlueprintSimulationPanel({
+  document,
+  result,
+  activeStep,
+  onResult,
+  onSelectStep,
+  onClose,
+  mode = 'combined',
+  onModeChange,
+}: BlueprintSimulationPanelProps) {
   const incoming = new Set(document.edges.map((edge) => edge.target));
   const defaultEntry = document.nodes.find((node) => !incoming.has(node.id))?.id ?? document.nodes[0]?.id ?? '';
   const [entryNodeId, setEntryNodeId] = useState(defaultEntry);
@@ -35,11 +46,21 @@ export default function BlueprintSimulationPanel({ document, result, activeStep,
   return (
     <aside className="blueprint-tool-panel blueprint-simulation-panel" aria-label="Симуляция blueprint">
       <header><div><span>Runtime preview</span><h2>Симуляция</h2></div><button type="button" aria-label="Закрыть симуляцию" onClick={onClose}>×</button></header>
-      <label><span>Стартовый компонент</span><select value={entryNodeId} onChange={(event) => setEntryNodeId(event.target.value)}>{document.nodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}</select></label>
-      <label><span>Входные данные JSON</span><textarea name="blueprint-simulation-input" rows={5} value={payload} onChange={(event) => setPayload(event.target.value)} spellCheck={false} /></label>
-      <button type="button" className="blueprint-tool-panel__primary" disabled={!entryNodeId} onClick={run}>▶ Запустить поток</button>
-      {error ? <p className="blueprint-tool-panel__error" role="alert">{error}</p> : null}
-      {result ? (
+      {mode !== 'combined' ? (
+        <nav className="blueprint-runtime-tabs" aria-label="Режим Blueprint runtime">
+          <button type="button" className={mode === 'request' ? 'is-active' : ''} onClick={() => onModeChange?.('request')}>↗ Запрос</button>
+          <button type="button" className={mode === 'trace' ? 'is-active' : ''} onClick={() => onModeChange?.('trace')}>⌁ Трейс</button>
+        </nav>
+      ) : null}
+      {mode !== 'trace' ? (
+        <>
+          <label><span>Стартовый компонент</span><select value={entryNodeId} onChange={(event) => setEntryNodeId(event.target.value)}>{document.nodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}</select></label>
+          <label><span>Входные данные JSON</span><textarea name="blueprint-simulation-input" rows={5} value={payload} onChange={(event) => setPayload(event.target.value)} spellCheck={false} /></label>
+          <button type="button" className="blueprint-tool-panel__primary" disabled={!entryNodeId} onClick={run}>▶ Отправить запрос</button>
+          {error ? <p className="blueprint-tool-panel__error" role="alert">{error}</p> : null}
+        </>
+      ) : null}
+      {mode !== 'request' && result ? (
         <section className="blueprint-simulation-result">
           <div><strong className={`is-${result.status}`}>{result.status === 'completed' ? 'Выполнено' : 'Есть ошибка'}</strong><span>{result.steps.length} шагов</span></div>
           <ol>{result.steps.map((step, index) => (
@@ -49,7 +70,7 @@ export default function BlueprintSimulationPanel({ document, result, activeStep,
           ))}</ol>
           {result.output !== undefined ? <details><summary>Результат</summary><pre>{JSON.stringify(result.output, null, 2)}</pre></details> : null}
         </section>
-      ) : null}
+      ) : mode === 'trace' ? <div className="blueprint-runtime-empty"><strong>Трейсов пока нет</strong><span>Отправьте запрос или выполните быстрый запуск.</span></div> : null}
     </aside>
   );
 }

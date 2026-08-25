@@ -8,6 +8,7 @@ import {
   generateBlueprintCode,
   inspectBlueprintProject,
 } from '../src/server/blueprint-codegen.js';
+import { BlueprintRuntimeManager } from '../src/server/blueprint-runtime.js';
 import { parseBlueprintFile } from '../src/shared/blueprint-file.js';
 import type { ArchitectureBlueprintDraft } from '../src/shared/blueprint.js';
 
@@ -62,7 +63,11 @@ describe('blueprint code generation', () => {
       expect(first.created).toEqual(expect.arrayContaining([
         'generated/order-flow/order-api.ts',
         'generated/order-flow/order-service.ts',
+        'generated/order-flow/package.json',
+        'generated/order-flow/server.mjs',
         'generated/order-flow/code-atlas.blueprint.json',
+        'generated/order-flow/package.json',
+        'generated/order-flow/server.mjs',
         'generated/order-flow/README.md',
       ]));
       expect(second.created).toEqual([]);
@@ -91,12 +96,51 @@ describe('blueprint code generation', () => {
     expect(scaffold.files.map((file) => file.path)).toEqual(expect.arrayContaining([
       'order-api.ts',
       'order-service.ts',
+      'package.json',
+      'server.mjs',
       'README.md',
       'code-atlas.blueprint.json',
     ]));
     const manifest = scaffold.files.find((file) => file.path === 'code-atlas.blueprint.json');
     expect(manifest?.overwrite).toBe(true);
     expect(parseBlueprintFile(manifest?.contents ?? '').blueprint).toEqual(blueprint);
+  });
+
+  it('runs an exported folder as a standalone HTTP project', async () => {
+    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), 'code-atlas-runnable-blueprint-'));
+    const manager = new BlueprintRuntimeManager();
+    try {
+      const blueprint = createBlueprint(projectPath);
+      const scaffold = createBlueprintScaffold({ blueprintName: 'Runnable Blueprint', blueprint });
+      await Promise.all(scaffold.files
+        .filter((file) => file.path !== 'package.json' && file.path !== 'server.mjs')
+        .map((file) => fs.writeFile(path.join(projectPath, file.path), file.contents)));
+
+      const status = await manager.start(projectPath);
+      expect(status.status).toBe('running');
+      expect(status.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      await expect(fs.stat(path.join(projectPath, 'package.json'))).resolves.toMatchObject({ size: expect.any(Number) });
+      await expect(fs.stat(path.join(projectPath, 'server.mjs'))).resolves.toMatchObject({ size: expect.any(Number) });
+
+      const health = await fetch(`${status.origin}/health`);
+      expect(health.status).toBe(200);
+      await expect(health.json()).resolves.toEqual({ status: 'ok', blueprint: 'Runnable Blueprint' });
+
+      const response = await fetch(`${status.origin}/orders`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ orderId: 'demo-1' }),
+      });
+      const result = await response.json() as { ok: boolean; steps: unknown[]; output: unknown };
+      expect(response.status).toBe(200);
+      expect(result.ok).toBe(true);
+      expect(result.steps).toHaveLength(2);
+      expect(result.output).toEqual({ orderId: 'demo-1', accepted: true });
+      await expect(manager.stop(projectPath)).resolves.toMatchObject({ status: 'stopped' });
+    } finally {
+      await manager.close();
+      await fs.rm(projectPath, { recursive: true, force: true });
+    }
   });
 
   it('recognizes an exported folder as a Blueprint project', async () => {

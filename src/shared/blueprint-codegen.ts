@@ -39,3 +39,10 @@ export interface SavedBlueprintProject {
 export type BlueprintProjectInspection =
   | { found: false }
   | { found: true; name: string; blueprint: ArchitectureBlueprintDraft };
+
+export interface BlueprintRuntimeStatus {
+  status: 'stopped' | 'running';
+  projectPath: string;
+  origin?: string;
+  message?: string;
+}

@@ -28,7 +28,7 @@ import type {
   StoredAnalysisSnapshot,
 } from '../shared/graph';
 import type { ArchitectureBlueprintDraft, BlueprintDocument } from '../shared/blueprint';
-import type { BlueprintProjectInspection } from '../shared/blueprint-codegen';
+import type { BlueprintProjectInspection, BlueprintRuntimeStatus } from '../shared/blueprint-codegen';
 import { parseBlueprintFile } from '../shared/blueprint-file';
 import type { RequestTrace } from '../shared/request-trace';
 import type { SourceEditor } from '../shared/source-editor';
@@ -83,6 +83,10 @@ export function App() {
   const [workspaceMode, setWorkspaceMode] = useState<'map' | 'constructor'>('map');
   const [mapBlueprint, setMapBlueprint] = useState<BlueprintMapSelection | null>(null);
   const [mapSource, setMapSource] = useState<'analysis' | 'blueprint'>('analysis');
+  const [blueprintRuntimeMode, setBlueprintRuntimeMode] = useState<'request' | 'trace' | null>(null);
+  const [blueprintProjectDetected, setBlueprintProjectDetected] = useState(false);
+  const [blueprintRuntime, setBlueprintRuntime] = useState<BlueprintRuntimeStatus | null>(null);
+  const [blueprintRuntimeBusy, setBlueprintRuntimeBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => readSidebarPreference());
   const [sourceEditor, setSourceEditor] = useState<SourceEditor>(() => readSourceEditorPreference());
   const [loading, setLoading] = useState(true);
@@ -118,6 +122,9 @@ export function App() {
     setFocusNode(null);
     setRequestTrace(null);
     setRightToolPanel(null);
+    setBlueprintRuntimeMode(null);
+    setBlueprintProjectDetected(false);
+    setBlueprintRuntime(null);
   }, []);
 
   const loadSnapshots = useCallback(async (targetProjectPath: string) => {
@@ -272,6 +279,44 @@ export function App() {
   }, [loadAnalysis]);
 
   useEffect(() => () => activeRequest.current?.abort(), []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const targetPath = analysis?.summary.rootPath;
+    if (!targetPath) return () => controller.abort();
+    void (async () => {
+      try {
+        const inspectResponse = await apiFetch('/api/blueprints/inspect-project', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ projectPath: targetPath }),
+          signal: controller.signal,
+        });
+        const inspection = await inspectResponse.json() as BlueprintProjectInspection | { error: string };
+        if (!inspectResponse.ok || 'error' in inspection || !inspection.found) {
+          setBlueprintProjectDetected(false);
+          setBlueprintRuntime(null);
+          return;
+        }
+        setBlueprintProjectDetected(true);
+        const statusResponse = await apiFetch('/api/blueprints/runtime/status', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ projectPath: targetPath }),
+          signal: controller.signal,
+        });
+        const status = await statusResponse.json() as BlueprintRuntimeStatus | { error: string };
+        if (statusResponse.ok && !('error' in status)) setBlueprintRuntime(status);
+        else setBlueprintRuntime({ status: 'stopped', projectPath: targetPath, message: 'Сохраните Blueprint заново, чтобы добавить runtime.' });
+      } catch (runtimeError) {
+        if (!(runtimeError instanceof DOMException && runtimeError.name === 'AbortError')) {
+          setBlueprintProjectDetected(false);
+          setBlueprintRuntime(null);
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [analysis?.summary.rootPath]);
 
   useEffect(() => {
     try {
@@ -437,48 +482,29 @@ export function App() {
     setRightToolPanel(null);
     setSelectedNode(null);
     setMapSelectedIds(new Set());
+    setBlueprintRuntimeMode(null);
   }, []);
-
-  const openProjectPath = useCallback(async (targetPath: string) => {
-    setError(null);
-    setProjectPath(targetPath);
-    try {
-      const response = await apiFetch('/api/blueprints/inspect-project', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ projectPath: targetPath }),
-      });
-      const payload = await response.json() as BlueprintProjectInspection | { error: string };
-      if (!response.ok || 'error' in payload) {
-        throw new Error('error' in payload ? payload.error : 'Не удалось проверить папку проекта.');
-      }
-      if (payload.found) {
-        openBlueprintOnMap(payload.blueprint, payload.name, null);
-        return;
-      }
-      await runBackgroundAnalysis(targetPath, undefined, analysisPriority);
-    } catch (openError) {
-      setError(openError instanceof Error ? openError.message : 'Не удалось открыть проект.');
-    }
-  }, [analysisPriority, openBlueprintOnMap, runBackgroundAnalysis]);
 
   const handleAnalyze = useCallback((event: React.FormEvent) => {
     event.preventDefault();
     const targetPath = projectPath.trim();
-    if (targetPath) void openProjectPath(targetPath);
-  }, [openProjectPath, projectPath]);
+    if (targetPath) void runBackgroundAnalysis(targetPath, undefined, analysisPriority);
+  }, [analysisPriority, projectPath, runBackgroundAnalysis]);
 
   const handleChooseProjectDirectory = useCallback(async () => {
     setError(null);
     try {
       const selectedPath = await chooseProjectDirectory();
-      if (selectedPath) await openProjectPath(selectedPath);
+      if (selectedPath) {
+        setProjectPath(selectedPath);
+        await runBackgroundAnalysis(selectedPath, undefined, analysisPriority);
+      }
     } catch (pickerError) {
       setError(pickerError instanceof Error
         ? `Не удалось открыть системный выбор папки: ${pickerError.message}`
         : 'Не удалось открыть системный выбор папки.');
     }
-  }, [openProjectPath]);
+  }, [analysisPriority, runBackgroundAnalysis]);
 
   const openBlueprintFromProject = useCallback(async () => {
     setError(null);
@@ -508,6 +534,32 @@ export function App() {
     setSelectedNode(null);
     setMapSelectedIds(new Set());
   }, []);
+
+  const toggleBlueprintRuntime = useCallback(async () => {
+    if (!analysis) return;
+    setBlueprintRuntimeBusy(true);
+    setError(null);
+    try {
+      const action = blueprintRuntime?.status === 'running' ? 'stop' : 'start';
+      const response = await apiFetch(`/api/blueprints/runtime/${action}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectPath: analysis.summary.rootPath }),
+      });
+      const payload = await response.json() as BlueprintRuntimeStatus | { error: string };
+      if (!response.ok || 'error' in payload) throw new Error('error' in payload ? payload.error : 'Не удалось изменить состояние проекта.');
+      setBlueprintRuntime(payload);
+      if (payload.status === 'running') {
+        setSelectedNode(null);
+        setMapSelectedIds(new Set());
+        setRightToolPanel('request');
+      }
+    } catch (runtimeError) {
+      setError(runtimeError instanceof Error ? runtimeError.message : 'Не удалось запустить Blueprint-проект.');
+    } finally {
+      setBlueprintRuntimeBusy(false);
+    }
+  }, [analysis, blueprintRuntime?.status]);
 
   const diveIntoSelected = useCallback(() => {
     if (!selectedNode || !diveableIds.has(selectedNode.id)) return;
@@ -734,6 +786,16 @@ export function App() {
             ) : null}
             {workspaceMode === 'map' && mapSource === 'analysis' ? (
               <>
+                {blueprintProjectDetected ? (
+                  <button
+                    type="button"
+                    className={`request-trace-toggle project-runtime-toggle ${blueprintRuntime?.status === 'running' ? 'is-running' : ''}`}
+                    disabled={blueprintRuntimeBusy}
+                    aria-label={blueprintRuntime?.status === 'running' ? 'Остановить Blueprint-проект' : 'Запустить Blueprint-проект'}
+                    title={blueprintRuntime?.status === 'running' ? `Остановить ${blueprintRuntime.origin ?? 'проект'}` : blueprintRuntime?.message ?? 'Запустить Blueprint-проект'}
+                    onClick={() => void toggleBlueprintRuntime()}
+                  ><span>{blueprintRuntime?.status === 'running' ? '■' : '▶'}</span><b>{blueprintRuntimeBusy ? 'Запуск…' : blueprintRuntime?.status === 'running' ? 'Остановить' : 'Запустить'}</b></button>
+                ) : null}
                 <DiagnosticsMenu diagnostics={analysis.diagnostics} onSelect={selectDiagnostic} />
                 <MapFilters visibleKinds={visibleKinds} onChange={setVisibleKinds} />
                 <button
@@ -768,6 +830,20 @@ export function App() {
                 </label>
               </>
             ) : null}
+            {workspaceMode === 'map' && mapSource === 'blueprint' && mapBlueprint ? (
+              <>
+                <button
+                  type="button"
+                  className={`request-trace-toggle ${blueprintRuntimeMode === 'request' ? 'is-active' : ''}`}
+                  onClick={() => setBlueprintRuntimeMode((current) => current === 'request' ? null : 'request')}
+                ><span>↗</span><b>Запрос</b></button>
+                <button
+                  type="button"
+                  className={`request-trace-toggle runtime-trace-toggle ${blueprintRuntimeMode === 'trace' ? 'is-active' : ''}`}
+                  onClick={() => setBlueprintRuntimeMode((current) => current === 'trace' ? null : 'trace')}
+                ><span>⌁</span><b>Трейс</b></button>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -783,6 +859,8 @@ export function App() {
             <BlueprintMapView
               name={mapBlueprint.name}
               document={mapBlueprint.document}
+              runtimeMode={blueprintRuntimeMode}
+              onRuntimeModeChange={setBlueprintRuntimeMode}
               {...(mapBlueprint.id ? { onEdit: () => changeWorkspaceMode('constructor') } : {})}
             />
           </Suspense>
@@ -884,6 +962,7 @@ export function App() {
             <RequestTracePanel
               key={`${analysis.summary.rootPath}:${activeSnapshotId ?? 'live'}`}
               analysis={analysis}
+              {...(blueprintRuntime?.status === 'running' && blueprintRuntime.origin ? { runtimeOrigin: blueprintRuntime.origin } : {})}
               open={requestPanelOpen}
               trace={requestTrace}
               playback={tracePlayback}

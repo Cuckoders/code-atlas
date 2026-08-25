@@ -30,6 +30,7 @@ import {
   generateBlueprintCode,
   inspectBlueprintProject,
 } from './blueprint-codegen.js';
+import { BlueprintRuntimeError, BlueprintRuntimeManager } from './blueprint-runtime.js';
 import { executeRequestProbe, RequestProbeValidationError } from './request-probe.js';
 import {
   createDemoOtlpPayload,
@@ -103,7 +104,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   );
   const requestProbe = options.requestProbe ?? executeRequestProbe;
   const launchEditor = options.launchEditor;
+  const blueprintRuntime = new BlueprintRuntimeManager();
   app.addHook('onClose', async () => {
+    await blueprintRuntime.close();
     await queue.close();
     snapshots.close();
   });
@@ -393,6 +396,42 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
       return await inspectBlueprintProject(request.body.projectPath);
     } catch (error) {
       if (error instanceof BlueprintCodegenError) return reply.status(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.post<{ Body: { projectPath: string } }>('/api/blueprints/runtime/start', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    schema: { body: blueprintProjectInspectionSchema },
+  }, async (request, reply) => {
+    try {
+      return await blueprintRuntime.start(request.body.projectPath);
+    } catch (error) {
+      if (error instanceof BlueprintRuntimeError) return reply.status(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.post<{ Body: { projectPath: string } }>('/api/blueprints/runtime/stop', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    schema: { body: blueprintProjectInspectionSchema },
+  }, async (request, reply) => {
+    try {
+      return await blueprintRuntime.stop(request.body.projectPath);
+    } catch (error) {
+      if (error instanceof BlueprintRuntimeError) return reply.status(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.post<{ Body: { projectPath: string } }>('/api/blueprints/runtime/status', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    schema: { body: blueprintProjectInspectionSchema },
+  }, async (request, reply) => {
+    try {
+      return await blueprintRuntime.status(request.body.projectPath);
+    } catch (error) {
+      if (error instanceof BlueprintRuntimeError) return reply.status(error.statusCode).send({ error: error.message });
       throw error;
     }
   });

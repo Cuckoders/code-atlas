@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   applyNodeChanges,
   Background,
@@ -17,11 +17,11 @@ import type {
   BlueprintEdgeKind,
   BlueprintNode,
 } from '../../shared/blueprint';
-import type { BlueprintSimulationResult } from '../../shared/blueprint-simulation';
+import { simulateBlueprint, type BlueprintSimulationResult } from '../../shared/blueprint-simulation';
 import { BlueprintGraphNode, type BlueprintGraphNodeData } from './BlueprintGraphNode';
+import BlueprintSimulationPanel from './BlueprintSimulationPanel';
 
 const nodeTypes = { blueprint: BlueprintGraphNode };
-const BlueprintSimulationPanel = lazy(() => import('./BlueprintSimulationPanel'));
 
 const EDGE_LABELS: Record<BlueprintEdgeKind, string> = {
   http: 'HTTP',
@@ -46,10 +46,11 @@ interface BlueprintMapViewProps {
   name: string;
   document: ArchitectureBlueprintDraft;
   onEdit?: () => void;
+  runtimeMode: 'request' | 'trace' | null;
+  onRuntimeModeChange: (mode: 'request' | 'trace' | null) => void;
 }
 
-export default function BlueprintMapView({ name, document, onEdit }: BlueprintMapViewProps) {
-  const [simulationOpen, setSimulationOpen] = useState(false);
+export default function BlueprintMapView({ name, document, onEdit, runtimeMode, onRuntimeModeChange }: BlueprintMapViewProps) {
   const [simulationResult, setSimulationResult] = useState<BlueprintSimulationResult | null>(null);
   const [simulationStep, setSimulationStep] = useState(-1);
   const activeSimulationStep = simulationResult?.steps[simulationStep] ?? null;
@@ -86,6 +87,22 @@ export default function BlueprintMapView({ name, document, onEdit }: BlueprintMa
     setSelectedId(null);
   }, [sourceNodes]);
 
+  useEffect(() => {
+    setSimulationResult(null);
+    setSimulationStep(-1);
+  }, [document]);
+
+  const quickRun = () => {
+    const incoming = new Set(document.edges.map((edge) => edge.target));
+    const entryNodeId = document.nodes.find((node) => !incoming.has(node.id))?.id ?? document.nodes[0]?.id;
+    if (!entryNodeId) return;
+    const result = simulateBlueprint(document, entryNodeId, { requestId: 'quick-run', source: 'Code Atlas' });
+    setSelectedId(null);
+    setSimulationResult(result);
+    setSimulationStep(0);
+    onRuntimeModeChange('trace');
+  };
+
   const handleNodesChange = (changes: NodeChange<Node<BlueprintGraphNodeData>>[]) => {
     setNodes((current) => applyNodeChanges<Node<BlueprintGraphNodeData>>(changes, current));
   };
@@ -97,7 +114,7 @@ export default function BlueprintMapView({ name, document, onEdit }: BlueprintMa
         edges={edges}
         nodeTypes={nodeTypes}
         onNodesChange={handleNodesChange}
-        onNodeClick={(_event, node) => { setSelectedId(node.id); setSimulationOpen(false); }}
+        onNodeClick={(_event, node) => { setSelectedId(node.id); onRuntimeModeChange(null); }}
         onPaneClick={() => setSelectedId(null)}
         nodesConnectable={false}
         elementsSelectable
@@ -135,20 +152,20 @@ export default function BlueprintMapView({ name, document, onEdit }: BlueprintMa
         <span>Карта Blueprint</span>
         <strong>{name}</strong>
         <small>{document.nodes.length} узлов · {document.edges.length} связей</small>
-        <button type="button" onClick={() => { setSelectedId(null); setSimulationOpen(true); }}>▶ Запустить логику</button>
+        <button type="button" onClick={quickRun}>▶ Быстрый запуск</button>
       </div>
 
-      {simulationOpen ? (
-        <Suspense fallback={null}>
-          <BlueprintSimulationPanel
-            document={document}
-            result={simulationResult}
-            activeStep={simulationStep}
-            onResult={(result) => { setSimulationResult(result); setSimulationStep(0); }}
-            onSelectStep={setSimulationStep}
-            onClose={() => { setSimulationOpen(false); setSimulationStep(-1); }}
-          />
-        </Suspense>
+      {runtimeMode ? (
+        <BlueprintSimulationPanel
+          document={document}
+          result={simulationResult}
+          activeStep={simulationStep}
+          mode={runtimeMode}
+          onModeChange={onRuntimeModeChange}
+          onResult={(result) => { setSimulationResult(result); setSimulationStep(0); onRuntimeModeChange('trace'); }}
+          onSelectStep={setSimulationStep}
+          onClose={() => onRuntimeModeChange(null)}
+        />
       ) : null}
 
       {selectedNode ? (

@@ -15,6 +15,7 @@ import { TRACE_PLAYBACK_SPEEDS, type TracePlaybackOptions } from '../trace-playb
 
 interface RequestTracePanelProps {
   analysis: ProjectAnalysis;
+  runtimeOrigin?: string;
   open: boolean;
   trace: RequestTrace | null;
   playback: TracePlaybackOptions;
@@ -36,6 +37,7 @@ const ROLE_LABEL: Record<RequestTraceRole, string> = {
 
 export function RequestTracePanel({
   analysis,
+  runtimeOrigin,
   open,
   trace,
   playback,
@@ -55,6 +57,10 @@ export function RequestTracePanel({
   const activeRequest = useRef<AbortController | null>(null);
 
   useEffect(() => () => activeRequest.current?.abort(), []);
+
+  useEffect(() => {
+    if (runtimeOrigin) setUrl(`${runtimeOrigin.replace(/\/$/, '')}/`);
+  }, [runtimeOrigin]);
 
   const sendRequest = async (event: React.FormEvent) => {
     event.preventDefault();
