@@ -77,6 +77,18 @@ button { color: inherit; }
 .language-bar i { display: block; height: 100%; background: linear-gradient(90deg, #5279a1, #7ec8f7); }
 .tag-list { display: flex; flex-wrap: wrap; gap: 5px; }
 .tag-list span { padding: 5px 7px; border: 1px solid #25302f; border-radius: 4px; color: #91b7ac; background: #101816; font: 8px 'DM Mono'; }
+.git-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.git-stats > div { display: grid; padding: 8px; border: 1px solid #202733; border-radius: 5px; background: #0f131a; }
+.git-stats strong { color: #c1cad6; font: 500 12px 'DM Mono'; }
+.git-stats span { color: #586373; font-size: 7px; }
+.git-compare { display: flex; height: 28px; border: 1px solid #27303b; border-radius: 5px; overflow: hidden; }
+.git-compare input { min-width: 0; flex: 1; border: 0; outline: 0; padding: 0 7px; background: #0c1016; color: #aeb8c5; font: 8px 'DM Mono'; }
+.git-compare button { border: 0; border-left: 1px solid #304039; padding: 0 7px; background: #111d19; color: #7fcaaf; font-size: 7px; cursor: pointer; }
+.git-compare button:disabled { color: #48544f; cursor: default; }
+.comparison-summary { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; padding: 8px; border: 1px solid #39402d; border-radius: 5px; background: #17180f; }
+.comparison-summary strong { color: #d4c775; font: 8px 'DM Mono'; }
+.comparison-summary span, .comparison-summary small { color: #77755b; font-size: 7px; }
+.comparison-summary small { grid-column: 1 / -1; font-family: 'DM Mono'; }
 .diagnostic-list { display: grid; gap: 5px; }
 .diagnostic { display: grid; grid-template-columns: 6px minmax(0, 1fr); gap: 8px; width: 100%; padding: 8px; border: 1px solid #272d37; border-radius: 6px; background: #10131a; text-align: left; cursor: pointer; }
 .diagnostic:hover { border-color: #3d4654; background: #131821; }
@@ -129,6 +141,8 @@ button { color: inherit; }
 .atlas-node:hover { border-color: #4b596a; transform: translateY(-1px); }
 .atlas-node.is-selected { border-color: #7ee2c5; box-shadow: 0 0 0 1px rgba(126, 226, 197, .15), 0 10px 30px rgba(0, 0, 0, .32); }
 .atlas-node.is-dimmed { opacity: .16; }
+.atlas-node.has-git-change { border-color: #8a7941; box-shadow: 0 0 0 1px rgba(226, 199, 103, .12), 0 10px 30px rgba(0, 0, 0, .24); }
+.atlas-node__change { position: absolute; right: 8px; bottom: 7px; color: #d8c36e; font: 7px 'DM Mono'; }
 .atlas-node__icon { flex: none; display: grid; place-items: center; width: 31px; height: 31px; margin-right: 10px; border: 1px solid #31404f; border-radius: 7px; color: #74b7ff; background: #101a24; font: 500 11px 'DM Mono'; }
 .atlas-node__body { min-width: 0; display: grid; }
 .atlas-node__kind { margin-bottom: 2px; color: #596476; font: 7px 'DM Mono'; letter-spacing: .11em; text-transform: uppercase; }

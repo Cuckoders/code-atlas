@@ -77,7 +77,7 @@ export default function Graph3D({ nodes, edges, search, selectedId, onSelect }: 
     const graphNodes: ThreeNodeData[] = nodes.map((atlas) => ({
       id: atlas.id,
       atlas,
-      color: COLOR_BY_KIND[atlas.kind],
+      color: atlas.metadata?.gitChange ? '#e2c767' : COLOR_BY_KIND[atlas.kind],
       dimmed: Boolean(normalizedSearch) && !`${atlas.label} ${atlas.path ?? ''} ${atlas.language ?? ''}`
         .toLowerCase()
         .includes(normalizedSearch),

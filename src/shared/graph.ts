@@ -17,7 +17,25 @@ export type DiagnosticKind =
   | 'high-coupling'
   | 'cross-service-dependency'
   | 'isolated-module'
-  | 'shared-database';
+  | 'shared-database'
+  | 'change-hotspot';
+
+export interface GitComparison {
+  baseRef: string;
+  changedFiles: number;
+  added: number;
+  modified: number;
+  deleted: number;
+}
+
+export interface GitSummary {
+  available: boolean;
+  branch?: string;
+  commitsAnalyzed: number;
+  contributors: string[];
+  lastCommitAt?: string;
+  comparison?: GitComparison;
+}
 
 export interface SymbolMember {
   name: string;
@@ -72,6 +90,7 @@ export interface ProjectSummary {
   databases: string[];
   technologies: string[];
   languages: LanguageStat[];
+  git: GitSummary;
   durationMs: number;
   truncated: boolean;
 }

@@ -30,4 +30,14 @@ describe('API', () => {
     });
     expect(response.statusCode).toBe(400);
   });
+
+  it('rejects unsafe Git references', async () => {
+    app = await createApp({ logger: false });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/analyze',
+      payload: { path: fixturePath, compareRef: '--output=/tmp/atlas' },
+    });
+    expect(response.statusCode).toBe(400);
+  });
 });

@@ -20,8 +20,9 @@ const KIND_ICON: Record<NodeKind, string> = {
 export function AtlasGraphNode({ data, selected }: NodeProps) {
   const nodeData = data as AtlasGraphNodeData;
   const { atlas, dimmed } = nodeData;
+  const gitChange = typeof atlas.metadata?.gitChange === 'string' ? atlas.metadata.gitChange : null;
   return (
-    <div className={`atlas-node atlas-node--${atlas.kind} ${selected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''}`}>
+    <div className={`atlas-node atlas-node--${atlas.kind} ${selected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''} ${gitChange ? 'has-git-change' : ''}`}>
       <Handle type="target" position={Position.Left} className="atlas-handle" />
       <div className="atlas-node__icon" aria-hidden="true">{KIND_ICON[atlas.kind]}</div>
       <div className="atlas-node__body">
@@ -30,6 +31,7 @@ export function AtlasGraphNode({ data, selected }: NodeProps) {
         {atlas.subtitle ? <small>{atlas.subtitle}</small> : null}
       </div>
       {atlas.members?.length ? <span className="atlas-node__count">{atlas.members.length}</span> : null}
+      {gitChange ? <span className="atlas-node__change">Δ {gitChange.slice(0, 1).toUpperCase()}</span> : null}
       <Handle type="source" position={Position.Right} className="atlas-handle" />
     </div>
   );

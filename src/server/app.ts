@@ -40,7 +40,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     return analyzeProject(options.demoPath ?? defaultDemoPath);
   });
 
-  app.post<{ Body: { path: string } }>('/api/analyze', {
+  app.post<{ Body: { path: string; compareRef?: string } }>('/api/analyze', {
     config: {
       rateLimit: { max: 10, timeWindow: '1 minute' },
     },
@@ -51,10 +51,16 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
         required: ['path'],
         properties: {
           path: { type: 'string', minLength: 1, maxLength: 4_096 },
+          compareRef: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._/@-]*$',
+          },
         },
       },
     },
-  }, async (request) => analyzeProject(request.body.path));
+  }, async (request) => analyzeProject(request.body.path, { compareRef: request.body.compareRef }));
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AnalysisError) {

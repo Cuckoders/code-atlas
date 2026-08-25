@@ -10,6 +10,7 @@ import type {
   ProjectDiagnostic,
   SymbolMember,
 } from '../shared/graph.js';
+import { analyzeGitHistory, GitReferenceError, type GitFileHistory } from './git-analyzer.js';
 import { parseWithTreeSitter, type ParsedSource } from './tree-sitter-parser.js';
 
 const MAX_FILES = 1_500;
@@ -89,7 +90,11 @@ export class AnalysisError extends Error {
   }
 }
 
-export async function analyzeProject(inputPath: string): Promise<ProjectAnalysis> {
+export interface AnalyzeProjectOptions {
+  compareRef?: string;
+}
+
+export async function analyzeProject(inputPath: string, options: AnalyzeProjectOptions = {}): Promise<ProjectAnalysis> {
   const startedAt = performance.now();
   const rootPath = path.resolve(inputPath.trim());
   const rootStat = await fs.stat(rootPath).catch(() => null);
@@ -100,7 +105,17 @@ export async function analyzeProject(inputPath: string): Promise<ProjectAnalysis
 
   const { files, skipped, truncated } = await collectFiles(rootPath);
   const manifestFiles = files.filter((file) => MANIFEST_NAMES.has(path.basename(file.relativePath)));
-  const services = await discoverServices(rootPath, manifestFiles);
+  let services: ServiceInfo[];
+  let gitAnalysis: Awaited<ReturnType<typeof analyzeGitHistory>>;
+  try {
+    [services, gitAnalysis] = await Promise.all([
+      discoverServices(rootPath, manifestFiles),
+      analyzeGitHistory(rootPath, options.compareRef),
+    ]);
+  } catch (error) {
+    if (error instanceof GitReferenceError) throw new AnalysisError(error.message);
+    throw error;
+  }
   const projectName = path.basename(rootPath);
   const projectId = 'project:root';
   const nodes: AtlasNode[] = [{
@@ -175,7 +190,11 @@ export async function analyzeProject(inputPath: string): Promise<ProjectAnalysis
       language,
       subtitle: path.dirname(file.relativePath) === '.' ? language : path.dirname(file.relativePath),
       members: parsed.routes,
-      metadata: { lines: content.split('\n').length, parser: parsed.parser },
+      metadata: {
+        lines: content.split('\n').length,
+        parser: parsed.parser,
+        ...gitMetadata(gitAnalysis.files.get(file.relativePath)),
+      },
     });
     edges.push(edge(owner?.id ?? projectId, moduleId, 'contains'));
 
@@ -189,7 +208,7 @@ export async function analyzeProject(inputPath: string): Promise<ProjectAnalysis
         language,
         subtitle: `${symbol.kind} · строка ${symbol.line}`,
         members: symbol.members,
-        metadata: { line: symbol.line },
+        metadata: { line: symbol.line, ...gitMetadata(gitAnalysis.files.get(file.relativePath)) },
       });
       edges.push(edge(moduleId, symbolId, 'contains'));
       moduleInfo.symbolIds.set(symbol.name, symbolId);
@@ -270,6 +289,7 @@ export async function analyzeProject(inputPath: string): Promise<ProjectAnalysis
       databases: [...databases].sort(),
       technologies: [...technologies].sort(),
       languages,
+      git: gitAnalysis.summary,
       durationMs: Math.round(performance.now() - startedAt),
       truncated,
     },
@@ -277,6 +297,18 @@ export async function analyzeProject(inputPath: string): Promise<ProjectAnalysis
     edges: finalEdges,
     diagnostics,
     warnings,
+  };
+}
+
+function gitMetadata(history: GitFileHistory | undefined): AtlasNode['metadata'] {
+  if (!history) return {};
+  const churn = history.additions + history.deletions;
+  return {
+    gitCommits: history.commits,
+    gitChurn: churn,
+    gitAuthors: history.authors,
+    ...(history.lastChangedAt ? { gitLastChanged: history.lastChangedAt } : {}),
+    ...(history.change ? { gitChange: history.change } : {}),
   };
 }
 
@@ -852,6 +884,27 @@ function createArchitectureDiagnostics(
       message: `${database.label} используется ${consumers.length} сервисами — проверьте границы владения данными.`,
       nodeIds: [database.id, ...consumers.map((item) => item.source)],
       edgeIds: consumers.map((item) => item.id),
+    });
+  }
+
+  const hotspots = nodes
+    .filter((node) => node.kind === 'module')
+    .map((node) => ({
+      node,
+      commits: Number(node.metadata?.gitCommits ?? 0),
+      churn: Number(node.metadata?.gitChurn ?? 0),
+    }))
+    .filter((item) => item.commits >= 3 && (item.commits >= 8 || item.churn >= 200))
+    .sort((left, right) => (right.commits * Math.log1p(right.churn)) - (left.commits * Math.log1p(left.churn)))
+    .slice(0, 8);
+  for (const hotspot of hotspots) {
+    diagnostics.push({
+      id: `change-hotspot:${hotspot.node.id}`,
+      kind: 'change-hotspot',
+      severity: 'warning',
+      title: 'Hotspot изменений',
+      message: `${hotspot.node.label}: ${hotspot.commits} изменений, churn ${hotspot.churn} строк.`,
+      nodeIds: [hotspot.node.id],
     });
   }
 

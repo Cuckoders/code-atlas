@@ -151,6 +151,15 @@ export function App() {
     });
   }, [analysis]);
 
+  const compareWithGitReference = useCallback((compareRef: string) => {
+    if (!analysis) return;
+    void loadAnalysis('/api/analyze', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: analysis.summary.rootPath, compareRef }),
+    });
+  }, [analysis, loadAnalysis]);
+
   const selectedDiagnostics = useMemo(() => (
     selectedNode ? analysis?.diagnostics.filter((item) => item.nodeIds.includes(selectedNode.id)) ?? [] : []
   ), [analysis?.diagnostics, selectedNode]);
@@ -202,6 +211,8 @@ export function App() {
         visibleKinds={visibleKinds}
         onToggleKind={toggleKind}
         onSelectDiagnostic={selectDiagnostic}
+        onCompare={compareWithGitReference}
+        loading={loading}
       />
 
       <section className="canvas-shell">

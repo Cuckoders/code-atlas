@@ -1,3 +1,4 @@
+import { useState, type FormEvent } from 'react';
 import type { NodeKind, ProjectDiagnostic, ProjectSummary } from '../../shared/graph';
 
 interface ProjectSidebarProps {
@@ -6,6 +7,8 @@ interface ProjectSidebarProps {
   visibleKinds: Set<NodeKind>;
   onToggleKind: (kind: NodeKind) => void;
   onSelectDiagnostic: (diagnostic: ProjectDiagnostic) => void;
+  onCompare: (reference: string) => void;
+  loading: boolean;
 }
 
 const FILTERS: Array<{ kind: NodeKind; label: string }> = [
@@ -24,7 +27,16 @@ export function ProjectSidebar({
   visibleKinds,
   onToggleKind,
   onSelectDiagnostic,
+  onCompare,
+  loading,
 }: ProjectSidebarProps) {
+  const [compareRef, setCompareRef] = useState('main');
+
+  const handleCompare = (event: FormEvent) => {
+    event.preventDefault();
+    if (compareRef.trim()) onCompare(compareRef.trim());
+  };
+
   return (
     <aside className="project-sidebar">
       <section>
@@ -59,6 +71,34 @@ export function ProjectSidebar({
           <div className="tag-list">{summary.technologies.map((item) => <span key={item}>{item}</span>)}</div>
         </section>
       ) : null}
+
+      <section className="sidebar-section git-section">
+        <div className="section-heading"><h2>Git-история</h2><span>{summary.git.available ? summary.git.branch ?? 'detached' : '—'}</span></div>
+        {summary.git.available ? (
+          <>
+            <div className="git-stats">
+              <div><strong>{summary.git.commitsAnalyzed}</strong><span>коммитов</span></div>
+              <div><strong>{summary.git.contributors.length}</strong><span>авторов</span></div>
+            </div>
+            <form className="git-compare" onSubmit={handleCompare}>
+              <input
+                value={compareRef}
+                onChange={(event) => setCompareRef(event.target.value)}
+                placeholder="ветка или тег"
+                aria-label="Git-ветка или тег для сравнения"
+              />
+              <button type="submit" disabled={loading || !compareRef.trim()}>Сравнить</button>
+            </form>
+            {summary.git.comparison ? (
+              <div className="comparison-summary">
+                <strong>Δ {summary.git.comparison.baseRef}</strong>
+                <span>{summary.git.comparison.changedFiles} файлов</span>
+                <small>+{summary.git.comparison.added} · ~{summary.git.comparison.modified} · −{summary.git.comparison.deleted}</small>
+              </div>
+            ) : null}
+          </>
+        ) : <p className="diagnostic-empty">Git-репозиторий не найден</p>}
+      </section>
 
       <section className="sidebar-section diagnostics-section">
         <div className="section-heading"><h2>Диагностика</h2><span>{diagnostics.length}</span></div>
