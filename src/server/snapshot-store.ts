@@ -87,6 +87,8 @@ export class SnapshotStore implements ParseCache {
       );
       CREATE INDEX IF NOT EXISTS analysis_snapshots_created_at
         ON analysis_snapshots(created_at DESC);
+      CREATE INDEX IF NOT EXISTS analysis_snapshots_project_created_at
+        ON analysis_snapshots(project_path, created_at DESC);
       CREATE TABLE IF NOT EXISTS parsed_sources (
         project_path TEXT NOT NULL,
         relative_path TEXT NOT NULL,
@@ -213,10 +215,11 @@ export class SnapshotStore implements ParseCache {
         DELETE FROM analysis_snapshots
         WHERE id IN (
           SELECT id FROM analysis_snapshots
+          WHERE project_path = ?
           ORDER BY created_at DESC, rowid DESC
           LIMIT -1 OFFSET ?
         )
-      `).run(MAX_SNAPSHOTS);
+      `).run(summary.projectPath, MAX_SNAPSHOTS);
       this.database.exec('COMMIT');
     } catch (error) {
       this.database.exec('ROLLBACK');
@@ -225,9 +228,16 @@ export class SnapshotStore implements ParseCache {
     return summary;
   }
 
-  list(limit = 12): AnalysisSnapshotSummary[] {
+  list(limit = 12, projectPath?: string): AnalysisSnapshotSummary[] {
     const safeLimit = Math.max(1, Math.min(limit, MAX_SNAPSHOTS));
-    const rows = this.database.prepare(`
+    const rows = projectPath ? this.database.prepare(`
+      SELECT id, created_at, project_name, project_path, compare_ref,
+             files_scanned, node_count, edge_count, duration_ms
+      FROM analysis_snapshots
+      WHERE project_path = ?
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT ?
+    `).all(projectPath, safeLimit) as unknown as SnapshotRow[] : this.database.prepare(`
       SELECT id, created_at, project_name, project_path, compare_ref,
              files_scanned, node_count, edge_count, duration_ms
       FROM analysis_snapshots

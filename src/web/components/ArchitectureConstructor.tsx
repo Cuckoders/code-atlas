@@ -105,9 +105,10 @@ type SaveState = 'idle' | 'loading' | 'saving' | 'saved' | 'error';
 
 interface ArchitectureConstructorProps {
   analysis: ProjectAnalysis;
+  onOpenOnMap: (document: ArchitectureBlueprintDraft, name: string, id: string | null) => void;
 }
 
-export default function ArchitectureConstructor({ analysis }: ArchitectureConstructorProps) {
+export default function ArchitectureConstructor({ analysis, onOpenOnMap }: ArchitectureConstructorProps) {
   const emptyDocument = useMemo<ArchitectureBlueprintDraft>(() => ({
     version: BLUEPRINT_VERSION,
     projectPath: analysis.summary.rootPath,
@@ -277,7 +278,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     return () => controller.abort();
   }, [analysis.summary.rootPath, emptyDocument, openBlueprint]);
 
-  const save = useCallback(async () => {
+  const save = useCallback(async (): Promise<BlueprintDocument | null> => {
     const snapshot = documentRef.current;
     setSaveState('saving');
     setMessage('Сохраняем blueprint…');
@@ -295,11 +296,22 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       if (documentRef.current === snapshot) setDirty(false);
       setSaveState('saved');
       setMessage('Blueprint сохранён локально.');
+      return payload;
     } catch (saveError) {
       setSaveState('error');
       setMessage(saveError instanceof Error ? saveError.message : 'Не удалось сохранить blueprint.');
+      return null;
     }
   }, [activeBlueprintId, blueprintName]);
+
+  const openOnMap = useCallback(async () => {
+    const saved = dirty ? await save() : null;
+    if (dirty && !saved) return;
+    const source = saved
+      ? { version: saved.version, projectPath: saved.projectPath, nodes: saved.nodes, edges: saved.edges }
+      : documentRef.current;
+    onOpenOnMap(source, saved?.name ?? blueprintName, saved?.id ?? activeBlueprintId);
+  }, [activeBlueprintId, blueprintName, dirty, onOpenOnMap, save]);
 
   const addNode = useCallback((kind: BlueprintNodeKind, position?: { x: number; y: number }) => {
     const bounds = canvas.current?.getBoundingClientRect();
@@ -609,6 +621,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
           <button type="button" className="blueprint-import" onClick={importActual}>Импортировать факт</button>
           <button type="button" className={simulationOpen ? 'is-active' : ''} disabled={document.nodes.length === 0} onClick={() => { setSimulationOpen((open) => !open); setCodegenOpen(false); }}>▶ Запустить</button>
           <button type="button" className={codegenOpen ? 'is-active' : ''} disabled={document.nodes.length === 0} onClick={() => { setCodegenOpen((open) => !open); setSimulationOpen(false); }}>⌘ Код</button>
+          <button type="button" className="blueprint-open-map" disabled={document.nodes.length === 0 || saveState === 'saving' || saveState === 'loading'} onClick={() => void openOnMap()}>⌘ Открыть на карте</button>
         </div>
         <div className="blueprint-drift" aria-label="Архитектурный drift">
           <span className="is-matched">● {drift.matched} совпадает</span>

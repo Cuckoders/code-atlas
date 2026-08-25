@@ -252,15 +252,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     return job ?? reply.status(404).send({ error: 'Задание анализа не найдено.' });
   });
 
-  app.get<{ Querystring: { limit?: number } }>('/api/snapshots', {
+  app.get<{ Querystring: { limit?: number; projectPath?: string } }>('/api/snapshots', {
     schema: {
       querystring: {
         type: 'object',
         additionalProperties: false,
-        properties: { limit: { type: 'integer', minimum: 1, maximum: 50 } },
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 50 },
+          projectPath: { type: 'string', minLength: 1, maxLength: 4_096 },
+        },
       },
     },
-  }, async (request) => snapshots.list(request.query.limit));
+  }, async (request) => snapshots.list(request.query.limit, request.query.projectPath));
 
   app.get<{ Params: { id: string } }>('/api/snapshots/:id', {
     schema: { params: identifierParamsSchema },

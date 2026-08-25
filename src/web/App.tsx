@@ -27,6 +27,7 @@ import type {
   ProjectDiagnostic,
   StoredAnalysisSnapshot,
 } from '../shared/graph';
+import type { ArchitectureBlueprintDraft } from '../shared/blueprint';
 import type { RequestTrace } from '../shared/request-trace';
 import type { SourceEditor } from '../shared/source-editor';
 import { AtlasGraphNode, type AtlasGraphNodeData } from './components/AtlasGraphNode';
@@ -46,6 +47,7 @@ const nodeTypes = { atlas: AtlasGraphNode, serviceZone: GraphZoneNode, layerZone
 const edgeTypes = { requestTrace: RequestTraceEdge };
 const Graph3D = lazy(() => import('./components/Graph3D'));
 const ArchitectureConstructor = lazy(() => import('./components/ArchitectureConstructor'));
+const BlueprintMapView = lazy(() => import('./components/BlueprintMapView'));
 const RuntimeTracePanel = lazy(() => import('./components/RuntimeTracePanel'));
 const ALL_KINDS: NodeKind[] = ['project', 'service', 'database', 'module', 'controller', 'class', 'interface', 'function'];
 const SIDEBAR_STORAGE_KEY = 'code-atlas:ui:sidebar:v1';
@@ -63,6 +65,7 @@ const COLOR_BY_KIND: Record<NodeKind, string> = {
 };
 
 type RightToolPanel = 'request' | 'runtime' | null;
+type BlueprintMapSelection = { id: string | null; name: string; document: ArchitectureBlueprintDraft };
 
 export function App() {
   const [analysis, setAnalysis] = useState<ProjectAnalysis | null>(null);
@@ -74,6 +77,8 @@ export function App() {
   const [focusNode, setFocusNode] = useState<AtlasNode | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [workspaceMode, setWorkspaceMode] = useState<'map' | 'constructor'>('map');
+  const [mapBlueprint, setMapBlueprint] = useState<BlueprintMapSelection | null>(null);
+  const [mapSource, setMapSource] = useState<'analysis' | 'blueprint'>('analysis');
   const [sidebarOpen, setSidebarOpen] = useState(() => readSidebarPreference());
   const [sourceEditor, setSourceEditor] = useState<SourceEditor>(() => readSourceEditorPreference());
   const [loading, setLoading] = useState(true);
@@ -99,11 +104,20 @@ export function App() {
 
   const applyAnalysis = useCallback((nextAnalysis: ProjectAnalysis, snapshotId: string | null = null) => {
     setAnalysis(nextAnalysis);
+    setMapBlueprint(null);
+    setMapSource('analysis');
     setActiveSnapshotId(snapshotId);
     setSelectedNode(null);
     setFocusNode(null);
     setRequestTrace(null);
     setRightToolPanel(null);
+  }, []);
+
+  const loadSnapshots = useCallback(async (targetProjectPath: string) => {
+    const query = new URLSearchParams({ limit: '8', projectPath: targetProjectPath });
+    const response = await apiFetch(`/api/snapshots?${query}`);
+    if (!response.ok) throw new Error('Не удалось загрузить список снимков.');
+    setSnapshots(await response.json() as AnalysisSnapshotSummary[]);
   }, []);
 
   const loadAnalysis = useCallback(async (url: string, init?: RequestInit) => {
@@ -114,18 +128,13 @@ export function App() {
       const payload = await response.json() as ProjectAnalysis | { error: string };
       if (!response.ok || 'error' in payload) throw new Error('error' in payload ? payload.error : 'Ошибка анализа');
       applyAnalysis(payload);
+      await loadSnapshots(payload.summary.rootPath);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Неизвестная ошибка');
     } finally {
       setLoading(false);
     }
-  }, [applyAnalysis]);
-
-  const loadSnapshots = useCallback(async () => {
-    const response = await apiFetch('/api/snapshots?limit=8');
-    if (!response.ok) throw new Error('Не удалось загрузить список снимков.');
-    setSnapshots(await response.json() as AnalysisSnapshotSummary[]);
-  }, []);
+  }, [applyAnalysis, loadSnapshots]);
 
   const runBackgroundAnalysis = useCallback(async (
     path: string,
@@ -176,7 +185,7 @@ export function App() {
         throw new Error('error' in stored ? stored.error : 'Не удалось открыть готовый снимок.');
       }
       applyAnalysis(stored.analysis, stored.snapshot.id);
-      await loadSnapshots();
+      await loadSnapshots(stored.analysis.summary.rootPath);
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
       setError(requestError instanceof Error ? requestError.message : 'Неизвестная ошибка');
@@ -233,8 +242,7 @@ export function App() {
 
   useEffect(() => {
     void loadAnalysis('/api/demo');
-    void loadSnapshots().catch(() => undefined);
-  }, [loadAnalysis, loadSnapshots]);
+  }, [loadAnalysis]);
 
   useEffect(() => () => activeRequest.current?.abort(), []);
 
@@ -408,6 +416,27 @@ export function App() {
     setMapSelectedIds(new Set());
   }, []);
 
+  const openBlueprintOnMap = useCallback((
+    document: ArchitectureBlueprintDraft,
+    name: string,
+    id: string | null,
+  ) => {
+    setMapBlueprint({ id, name, document });
+    setMapSource('blueprint');
+    setViewMode('2d');
+    setWorkspaceMode('map');
+    setRightToolPanel(null);
+    setSelectedNode(null);
+    setMapSelectedIds(new Set());
+  }, []);
+
+  const openActualMap = useCallback(() => {
+    setMapSource('analysis');
+    setRightToolPanel(null);
+    setSelectedNode(null);
+    setMapSelectedIds(new Set());
+  }, []);
+
   const diveIntoSelected = useCallback(() => {
     if (!selectedNode || !diveableIds.has(selectedNode.id)) return;
     startTransition(() => {
@@ -523,7 +552,7 @@ export function App() {
             </>
           )}
         </form>
-        {workspaceMode === 'map' ? (
+        {workspaceMode === 'map' && !(mapSource === 'blueprint' && mapBlueprint) ? (
           <div className="view-switch" aria-label="Режим карты">
             <button className={viewMode === '2d' ? 'is-active' : ''} type="button" onClick={() => changeViewMode('2d')}>2D</button>
             <button
@@ -534,7 +563,7 @@ export function App() {
               onClick={() => changeViewMode('3d')}
             >3D</button>
           </div>
-        ) : <div className="view-switch view-switch--blueprint"><span>Blueprint</span></div>}
+        ) : <div className="view-switch view-switch--blueprint"><span>{workspaceMode === 'map' ? 'Blueprint map' : 'Blueprint'}</span></div>}
       </header>
 
       <ProjectSidebar
@@ -544,9 +573,10 @@ export function App() {
         activeSnapshotId={activeSnapshotId}
         onOpenSnapshot={openSnapshot}
         loading={loading}
+        blueprint={mapSource === 'blueprint' ? mapBlueprint : null}
       />
 
-      <section className={`canvas-shell ${workspaceMode === 'map' && requestPanelOpen ? 'is-request-panel-open' : ''} ${workspaceMode === 'map' && runtimePanelOpen ? 'is-runtime-panel-open' : ''}`}>
+      <section className={`canvas-shell ${workspaceMode === 'map' && mapSource === 'analysis' && requestPanelOpen ? 'is-request-panel-open' : ''} ${workspaceMode === 'map' && mapSource === 'analysis' && runtimePanelOpen ? 'is-runtime-panel-open' : ''}`}>
         <div className="canvas-toolbar">
           <div className="canvas-toolbar__context">
             <button
@@ -559,7 +589,9 @@ export function App() {
               onClick={() => setSidebarOpen((current) => !current)}
             ><span aria-hidden="true">{sidebarOpen ? '‹' : '☰'}</span></button>
             <span className="pulse" />
-            {workspaceMode === 'map' ? (
+            {workspaceMode === 'map' && mapSource === 'blueprint' && mapBlueprint ? (
+              <><strong className="blueprint-toolbar-title">Blueprint · {mapBlueprint.name}</strong><small>{mapBlueprint.document.nodes.length} узлов · {mapBlueprint.document.edges.length} связей</small></>
+            ) : workspaceMode === 'map' ? (
               <>
                 <nav className="focus-breadcrumb" aria-label="Текущий уровень карты">
                   <button type="button" onClick={() => setFocusNode(null)}>Архитектурный граф</button>
@@ -589,7 +621,13 @@ export function App() {
                 onClick={() => changeWorkspaceMode('constructor')}
               >Конструктор</button>
             </div>
-            {workspaceMode === 'map' && viewMode === '2d' ? (
+            {workspaceMode === 'map' && mapBlueprint ? (
+              <div className="map-source-toggle" role="group" aria-label="Источник карты">
+                <button type="button" className={mapSource === 'analysis' ? 'is-active' : ''} onClick={openActualMap}>Код</button>
+                <button type="button" className={mapSource === 'blueprint' ? 'is-active' : ''} onClick={() => { setMapSource('blueprint'); setViewMode('2d'); setRightToolPanel(null); }}>Blueprint</button>
+              </div>
+            ) : null}
+            {workspaceMode === 'map' && mapSource === 'analysis' && viewMode === '2d' ? (
               <div className="graph-layout-toggle" role="group" aria-label="Раскладка 2D-карты">
                 <button
                   type="button"
@@ -605,7 +643,7 @@ export function App() {
                 >Слои</button>
               </div>
             ) : null}
-            {workspaceMode === 'map' ? (
+            {workspaceMode === 'map' && mapSource === 'analysis' ? (
               <>
                 <DiagnosticsMenu diagnostics={analysis.diagnostics} onSelect={selectDiagnostic} />
                 <MapFilters visibleKinds={visibleKinds} onChange={setVisibleKinds} />
@@ -641,11 +679,15 @@ export function App() {
         </div>
 
         {error ? <div className="error-banner">{error}<button type="button" onClick={() => setError(null)}>×</button></div> : null}
-        {analysis.warnings.map((warning) => <div className="warning-banner" key={warning}>{warning}</div>)}
+        {mapSource === 'analysis' ? analysis.warnings.map((warning) => <div className="warning-banner" key={warning}>{warning}</div>) : null}
 
         {workspaceMode === 'constructor' ? (
           <Suspense fallback={<div className="loading-overlay"><span />Загружаем конструктор…</div>}>
-            <ArchitectureConstructor key={analysis.summary.rootPath} analysis={analysis} />
+            <ArchitectureConstructor key={analysis.summary.rootPath} analysis={analysis} onOpenOnMap={openBlueprintOnMap} />
+          </Suspense>
+        ) : mapSource === 'blueprint' && mapBlueprint ? (
+          <Suspense fallback={<div className="loading-overlay"><span />Открываем Blueprint на карте…</div>}>
+            <BlueprintMapView name={mapBlueprint.name} document={mapBlueprint.document} onEdit={() => changeWorkspaceMode('constructor')} />
           </Suspense>
         ) : viewMode === '2d' ? (
           <div className="graph-viewport">
@@ -740,7 +782,7 @@ export function App() {
           </div>
         ) : null}
 
-        {workspaceMode === 'map' ? (
+        {workspaceMode === 'map' && mapSource === 'analysis' ? (
           <>
             <RequestTracePanel
               key={`${analysis.summary.rootPath}:${activeSnapshotId ?? 'live'}`}
@@ -770,7 +812,7 @@ export function App() {
         ) : null}
       </section>
 
-      {workspaceMode === 'map' ? (
+      {workspaceMode === 'map' && mapSource === 'analysis' ? (
         <Inspector
           node={rightToolPanel ? null : selectedNode}
           onClose={() => setSelectedNode(null)}

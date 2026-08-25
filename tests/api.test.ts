@@ -241,6 +241,19 @@ describe('API', () => {
       expect.objectContaining({ id: completed.snapshotId, projectName: 'sample-commerce', nodeCount: expect.any(Number) }),
     ]);
 
+    const projectSnapshotsResponse = await app.inject({
+      method: 'GET',
+      url: `/api/snapshots?projectPath=${encodeURIComponent(fixturePath)}`,
+    });
+    expect(projectSnapshotsResponse.statusCode).toBe(200);
+    expect(projectSnapshotsResponse.json<AnalysisSnapshotSummary[]>()).toEqual([
+      expect.objectContaining({ id: completed.snapshotId, projectPath: fixturePath }),
+    ]);
+    expect((await app.inject({
+      method: 'GET',
+      url: `/api/snapshots?projectPath=${encodeURIComponent('/projects/another-project')}`,
+    })).json()).toEqual([]);
+
     const snapshotResponse = await app.inject({ method: 'GET', url: `/api/snapshots/${completed.snapshotId}` });
     expect(snapshotResponse.statusCode).toBe(200);
     const storedSnapshot = snapshotResponse.json<StoredAnalysisSnapshot>();

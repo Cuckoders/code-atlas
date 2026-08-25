@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import type { AnalysisSnapshotSummary, ProjectSummary } from '../../shared/graph';
+import type { ArchitectureBlueprintDraft } from '../../shared/blueprint';
 
 interface ProjectSidebarProps {
   summary: ProjectSummary;
@@ -8,6 +9,7 @@ interface ProjectSidebarProps {
   activeSnapshotId: string | null;
   onOpenSnapshot: (snapshotId: string) => void;
   loading: boolean;
+  blueprint?: { id: string | null; name: string; document: ArchitectureBlueprintDraft } | null;
 }
 
 const SNAPSHOT_DATE = new Intl.DateTimeFormat('ru', {
@@ -24,6 +26,7 @@ export function ProjectSidebar({
   activeSnapshotId,
   onOpenSnapshot,
   loading,
+  blueprint,
 }: ProjectSidebarProps) {
   const [compareRef, setCompareRef] = useState('main');
 
@@ -35,20 +38,31 @@ export function ProjectSidebar({
   return (
     <aside className="project-sidebar" id="project-sidebar" aria-label="Обзор проекта">
       <section>
-        <p className="eyebrow">Обзор проекта</p>
-        <h1>{summary.name}</h1>
-        <p className="root-path" title={summary.rootPath}>{summary.rootPath}</p>
+        <p className="eyebrow">{blueprint ? 'Карта Blueprint' : 'Обзор проекта'}</p>
+        <h1>{blueprint?.name ?? summary.name}</h1>
+        <p className="root-path" title={blueprint?.document.projectPath ?? summary.rootPath}>{blueprint?.document.projectPath ?? summary.rootPath}</p>
       </section>
 
       <section className="stat-grid">
-        <article><strong>{summary.services}</strong><span>сервисов</span></article>
-        <article><strong>{summary.modules}</strong><span>модулей</span></article>
-        <article><strong>{summary.symbols}</strong><span>символов</span></article>
-        <article><strong>{summary.filesScanned}</strong><span>файлов</span></article>
+        {blueprint ? (
+          <>
+            <article><strong>{blueprint.document.nodes.length}</strong><span>узлов плана</span></article>
+            <article><strong>{blueprint.document.edges.length}</strong><span>связей</span></article>
+            <article><strong>{blueprint.document.nodes.filter((node) => node.status === 'implemented').length}</strong><span>реализовано</span></article>
+            <article><strong>{blueprint.document.nodes.filter((node) => node.status !== 'implemented').length}</strong><span>в плане</span></article>
+          </>
+        ) : (
+          <>
+            <article><strong>{summary.services}</strong><span>сервисов</span></article>
+            <article><strong>{summary.modules}</strong><span>модулей</span></article>
+            <article><strong>{summary.symbols}</strong><span>символов</span></article>
+            <article><strong>{summary.filesScanned}</strong><span>файлов</span></article>
+          </>
+        )}
       </section>
 
       <section className="sidebar-section snapshot-section">
-        <div className="section-heading"><h2>Снимки</h2><span>{snapshots.length}</span></div>
+        <div className="section-heading"><h2>Снимки анализа</h2><span>{snapshots.length}</span></div>
         {snapshots.length ? (
           <div className="snapshot-list">
             {snapshots.slice(0, 5).map((snapshot) => (
@@ -65,9 +79,11 @@ export function ProjectSidebar({
               </button>
             ))}
           </div>
-        ) : <p className="diagnostic-empty">Фоновые снимки появятся после анализа проекта</p>}
+        ) : <p className="diagnostic-empty">У этого проекта пока нет снимков анализа</p>}
       </section>
 
+      {!blueprint ? (
+        <>
       <section className="sidebar-section">
         <div className="section-heading"><h2>Языки</h2><span>{summary.languages.length}</span></div>
         <div className="language-list">
@@ -135,6 +151,13 @@ export function ProjectSidebar({
           ? ` · worker #${summary.execution.workerThreadId ?? '?'}`
           : ''}
       </footer>
+        </>
+      ) : (
+        <section className="sidebar-section blueprint-sidebar-note">
+          <h2>Отдельный документ</h2>
+          <p>Это сохранённая целевая архитектура, а не карта случайно выбранной папки. Снимки выше относятся только к анализу кода этого проекта.</p>
+        </section>
+      )}
     </aside>
   );
 }
