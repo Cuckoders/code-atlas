@@ -436,7 +436,7 @@ export function App() {
             proOptions={{ hideAttribution: true }}
           >
             <Background variant={BackgroundVariant.Dots} color="#29303c" gap={22} size={1.2} />
-            <Controls position="bottom-center" showInteractive={false} />
+            <Controls className="atlas-map-controls" position="bottom-right" showInteractive={false} />
             <MiniMap
               pannable
               zoomable

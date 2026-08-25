@@ -139,6 +139,7 @@ button { color: inherit; }
 .canvas-shell .react-flow { padding-top: 52px; }
 .react-flow__edge-text { font-family: 'DM Mono'; }
 .react-flow__controls { display: flex; border: 1px solid #28303b; border-radius: 7px; overflow: hidden; box-shadow: none; }
+.canvas-shell .atlas-map-controls { bottom: 160px; }
 .react-flow__controls-button { width: 30px; height: 28px; border: 0; border-right: 1px solid #28303b; background: #111620; fill: #778397; }
 .react-flow__controls-button:hover { background: #1a222d; }
 .react-flow__minimap { border: 1px solid #28303b; border-radius: 7px; background: #0c1017; }
