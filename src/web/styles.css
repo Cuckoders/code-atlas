@@ -249,17 +249,19 @@ button { color: inherit; }
 .icon-button { margin-left: auto; border: 0; background: transparent; color: #778292; font-size: 18px; cursor: pointer; }
 .inspector h2 { margin: 18px 0 9px; font: 600 20px 'DM Mono'; overflow-wrap: anywhere; }
 .path-chip { display: block; padding: 8px; border: 1px solid #252c37; border-radius: 5px; color: #7f8a9a; background: #090c11; font-size: 8px; overflow-wrap: anywhere; }
+.source-editor-launcher { display: grid; gap: 6px; margin-top: 10px; padding: 10px; border: 1px solid #2a3744; border-radius: 7px; background: linear-gradient(145deg, #101820, #0d131a); }.source-editor-launcher label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; }.source-editor-launcher label > span { color: #647285; font: 7px 'DM Mono'; text-transform: uppercase; }.source-editor-launcher select { min-width: 0; height: 28px; border: 1px solid #344252; border-radius: 5px; outline: 0; padding: 0 7px; color: #a8bac7; background-color: #0a0f15; font: 7px 'DM Mono'; }.source-editor-launcher select:focus-visible { outline: 2px solid #8edfc8; outline-offset: 2px; }.source-editor-launcher > button { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 32px; border: 1px solid #3b6257; border-radius: 5px; color: #9ae5d0; background: #12231e; font: 8px 'DM Mono'; cursor: pointer; }.source-editor-launcher > button:hover:not(:disabled) { border-color: #65a392; background: #172e27; }.source-editor-launcher > button:disabled { opacity: .5; cursor: default; }.source-editor-launcher > button:focus-visible { outline: 2px solid #8edfc8; outline-offset: 2px; }.source-editor-launcher > small { color: #536171; font: 6px/1.5 'DM Mono'; }.source-editor-launcher > p { min-height: 10px; margin: 0; color: #687788; font: 6px/1.4 'DM Mono'; }.source-editor-launcher > p.is-success { color: #79cdb4; }.source-editor-launcher > p.is-error { color: #e58b9a; }
 .dive-button { display: flex; justify-content: space-between; width: 100%; margin: 10px 0 4px; padding: 10px 11px; border: 1px solid #2e4942; border-radius: 6px; background: #111d1a; color: #8edbc5; font-size: 9px; cursor: pointer; }
 .dive-button:hover { border-color: #538176; background: #14241f; }
 .detail-row { display: flex; justify-content: space-between; gap: 14px; padding: 10px 0; border-bottom: 1px solid #1d232c; font-size: 9px; }
 .detail-row span { color: #5f6978; text-transform: capitalize; }.detail-row strong { color: #aeb7c5; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
 .inspector__section { display: grid; gap: 10px; margin-top: 24px; }
 .member-list { display: grid; gap: 5px; }
-.member { display: flex; gap: 9px; padding: 9px; border: 1px solid #202631; border-radius: 6px; background: #0f131a; }
+.member { display: flex; align-items: flex-start; gap: 9px; width: 100%; padding: 9px; border: 1px solid #202631; border-radius: 6px; color: inherit; background: #0f131a; text-align: left; }.member:hover:not(:disabled) { border-color: #365149; background: #121b1a; cursor: pointer; }.member:disabled { opacity: .72; }.member:focus-visible { outline: 2px solid #8edfc8; outline-offset: 2px; }.member > div { flex: 1; min-width: 0; }
 .member__kind { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; color: #7ee2c5; background: #14221e; font: 8px 'DM Mono'; }
 .member__kind--route { color: #bf91ff; background: #20172a; }
 .member strong { display: block; color: #bdc5d0; font: 8px 'DM Mono'; overflow-wrap: anywhere; }
 .member small { color: #555f6e; font-size: 7px; }
+.member__open { align-self: center; color: #608c80; font: 9px 'DM Mono'; font-style: normal; }
 .structure-diff__list { display: grid; gap: 6px; }
 .member-diff { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; padding: 9px; border: 1px solid #29313b; border-radius: 6px; background: #0f1319; }
 .member-diff__status { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; font: 600 11px 'DM Mono'; }

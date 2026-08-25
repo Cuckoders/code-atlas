@@ -8,6 +8,7 @@ import type { RequestProbeResult } from '../src/shared/request-trace.js';
 import type { ArchitectureBlueprint } from '../src/shared/blueprint.js';
 import { createDemoOtlpPayload } from '../src/server/runtime-trace.js';
 import type { RuntimeTraceSession, RuntimeTraceSummary } from '../src/shared/runtime-trace.js';
+import type { ResolvedSourceTarget } from '../src/server/source-editor.js';
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.resolve(currentDirectory, '../examples/sample-commerce');
@@ -34,6 +35,46 @@ describe('API', () => {
       payload: { path: '' },
     });
     expect(response.statusCode).toBe(400);
+  });
+
+  it('opens only allowlisted source paths inside the analyzed project', async () => {
+    let launched: ResolvedSourceTarget | null = null;
+    app = await createApp({
+      logger: false,
+      databasePath: ':memory:',
+      launchEditor: async (target) => { launched = target; },
+    });
+
+    const opened = await app.inject({
+      method: 'POST',
+      url: '/api/source/open',
+      payload: {
+        projectPath: fixturePath,
+        filePath: 'services/api/src/models.ts',
+        editor: 'vscode',
+        line: 7,
+      },
+    });
+    const escaped = await app.inject({
+      method: 'POST',
+      url: '/api/source/open',
+      payload: { projectPath: fixturePath, filePath: '../../package.json', editor: 'system' },
+    });
+    const unsupported = await app.inject({
+      method: 'POST',
+      url: '/api/source/open',
+      payload: { projectPath: fixturePath, filePath: 'package.json', editor: 'shell' },
+    });
+
+    expect(opened.statusCode).toBe(200);
+    expect(opened.json()).toEqual({ opened: true, editor: 'vscode' });
+    expect(launched).toEqual(expect.objectContaining({
+      targetPath: path.join(fixturePath, 'services/api/src/models.ts'),
+      line: 7,
+      editor: 'vscode',
+    }));
+    expect(escaped.statusCode).toBe(400);
+    expect(unsupported.statusCode).toBe(400);
   });
 
   it('protects a desktop sidecar session with an in-memory token', async () => {

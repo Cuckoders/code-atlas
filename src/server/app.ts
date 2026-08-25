@@ -29,6 +29,8 @@ import {
   RuntimeTraceValidationError,
 } from './runtime-trace.js';
 import { SnapshotStore } from './snapshot-store.js';
+import { openSourceFile, SourceEditorError, type EditorLauncher } from './source-editor.js';
+import { SOURCE_EDITORS, type OpenSourceRequest } from '../shared/source-editor.js';
 
 interface CreateAppOptions {
   logger?: boolean;
@@ -39,6 +41,7 @@ interface CreateAppOptions {
   analysisConcurrency?: number;
   apiToken?: string;
   requestProbe?: (input: RequestProbeInput) => Promise<RequestProbeResult>;
+  launchEditor?: EditorLauncher;
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<FastifyInstance> {
@@ -90,6 +93,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     options.analysisConcurrency,
   );
   const requestProbe = options.requestProbe ?? executeRequestProbe;
+  const launchEditor = options.launchEditor;
   app.addHook('onClose', async () => {
     await queue.close();
     snapshots.close();
@@ -103,6 +107,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   }
 
   app.get('/api/health', async () => ({ status: 'ok' }));
+
+  app.post<{ Body: OpenSourceRequest }>('/api/source/open', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    schema: { body: openSourceSchema },
+  }, async (request, reply) => {
+    try {
+      return await openSourceFile(request.body, launchEditor);
+    } catch (error) {
+      if (error instanceof SourceEditorError) return reply.status(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
 
   app.get<{ Querystring: { projectPath: string } }>('/api/runtime-traces/collector', {
     schema: { querystring: projectPathQuerySchema },
@@ -291,6 +307,19 @@ const analysisRequestSchema = {
       maxLength: 128,
       pattern: '^[A-Za-z0-9][A-Za-z0-9._/@-]*$',
     },
+  },
+} as const;
+
+const openSourceSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['projectPath', 'filePath', 'editor'],
+  properties: {
+    projectPath: { type: 'string', minLength: 1, maxLength: 4_096, pattern: '^[^\\u0000\\r\\n]+$' },
+    filePath: { type: 'string', minLength: 1, maxLength: 4_096, pattern: '^[^\\u0000\\r\\n]+$' },
+    editor: { type: 'string', enum: SOURCE_EDITORS },
+    line: { type: 'integer', minimum: 1, maximum: 10_000_000 },
+    column: { type: 'integer', minimum: 1, maximum: 100_000 },
   },
 } as const;
 

@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react';
 import type { AtlasNode, NodeKind, NodeStructureDiff, ProjectDiagnostic, SourceDiffLine, SymbolMember } from '../../shared/graph';
+import type { SourceEditor } from '../../shared/source-editor';
+import { sourceLocationForNode } from '../source-editor';
 
 interface InspectorProps {
   node: AtlasNode | null;
@@ -6,6 +9,9 @@ interface InspectorProps {
   canDive: boolean;
   onDive: () => void;
   diagnostics: ProjectDiagnostic[];
+  sourceEditor: SourceEditor;
+  onSourceEditorChange: (editor: SourceEditor) => void;
+  onOpenSource: (node: AtlasNode, line?: number) => Promise<void>;
 }
 
 const KIND_LABELS: Record<NodeKind, string> = {
@@ -19,7 +25,39 @@ const KIND_LABELS: Record<NodeKind, string> = {
   function: 'Функция',
 };
 
-export function Inspector({ node, onClose, canDive, onDive, diagnostics }: InspectorProps) {
+export function Inspector({
+  node,
+  onClose,
+  canDive,
+  onDive,
+  diagnostics,
+  sourceEditor,
+  onSourceEditorChange,
+  onOpenSource,
+}: InspectorProps) {
+  const [openingLine, setOpeningLine] = useState<number | 'node' | null>(null);
+  const [openStatus, setOpenStatus] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+  const sourceLocation = node ? sourceLocationForNode(node) : null;
+
+  useEffect(() => {
+    setOpeningLine(null);
+    setOpenStatus(null);
+  }, [node?.id]);
+
+  const openSource = async (line?: number) => {
+    if (!node || !sourceLocation) return;
+    setOpeningLine(line ?? 'node');
+    setOpenStatus(null);
+    try {
+      await onOpenSource(node, line);
+      setOpenStatus({ kind: 'success', message: `Открыто в ${EDITOR_LABELS[sourceEditor]}.` });
+    } catch (error) {
+      setOpenStatus({ kind: 'error', message: error instanceof Error ? error.message : 'Не удалось открыть исходник.' });
+    } finally {
+      setOpeningLine(null);
+    }
+  };
+
   return (
     <aside className={`inspector ${node ? 'inspector--open' : ''}`} aria-hidden={!node}>
       {node ? (
@@ -31,6 +69,29 @@ export function Inspector({ node, onClose, canDive, onDive, diagnostics }: Inspe
           </div>
           <h2>{node.label}</h2>
           {node.path ? <code className="path-chip">{node.path}</code> : null}
+          {sourceLocation ? (
+            <section className="source-editor-launcher">
+              <label>
+                <span>Редактор</span>
+                <select
+                  name="source-editor"
+                  value={sourceEditor}
+                  onChange={(event) => onSourceEditorChange(event.target.value as SourceEditor)}
+                >
+                  <option value="vscode">VS Code</option>
+                  <option value="cursor">Cursor</option>
+                  <option value="system">Системное приложение</option>
+                  <option value="simple">Notepad / TextEdit</option>
+                </select>
+              </label>
+              <button type="button" aria-busy={openingLine === 'node'} disabled={openingLine !== null} onClick={() => void openSource()}>
+                <span aria-hidden="true">↗</span>
+                {openingLine === 'node' ? 'Открываем…' : node.kind === 'project' ? 'Открыть папку проекта' : 'Открыть исходник'}
+              </button>
+              <small>Двойной клик открывает конечный блок. Для контейнера: Ctrl/Cmd + двойной клик.</small>
+              <p className={openStatus ? `is-${openStatus.kind}` : ''} aria-live="polite">{openStatus?.message ?? ''}</p>
+            </section>
+          ) : null}
           {canDive ? (
             <button type="button" className="dive-button" onClick={onDive}>
               Открыть этот уровень <span>→</span>
@@ -67,13 +128,21 @@ export function Inspector({ node, onClose, canDive, onDive, diagnostics }: Inspe
               </div>
               <div className="member-list">
                 {node.members.map((member, index) => (
-                  <div className="member" key={`${member.name}-${index}`}>
+                  <button
+                    type="button"
+                    className="member"
+                    disabled={!sourceLocation || !member.line || openingLine !== null}
+                    key={`${member.name}-${index}`}
+                    onClick={() => void openSource(member.line)}
+                    title={member.line ? `Открыть строку ${member.line} в ${EDITOR_LABELS[sourceEditor]}` : undefined}
+                  >
                     <span className={`member__kind member__kind--${member.kind}`}>{member.kind === 'method' ? 'M' : member.kind === 'route' ? '↗' : 'P'}</span>
                     <div>
                       <strong>{member.signature ?? member.name}</strong>
                       <small>{member.kind}{member.line ? ` · строка ${member.line}` : ''}</small>
                     </div>
-                  </div>
+                    <i className="member__open" aria-hidden="true">{openingLine === member.line ? '…' : '↗'}</i>
+                  </button>
                 ))}
               </div>
             </section>
@@ -95,6 +164,13 @@ export function Inspector({ node, onClose, canDive, onDive, diagnostics }: Inspe
     </aside>
   );
 }
+
+const EDITOR_LABELS: Record<SourceEditor, string> = {
+  vscode: 'VS Code',
+  cursor: 'Cursor',
+  system: 'системном приложении',
+  simple: 'простом редакторе',
+};
 
 function StructureDiff({ diff }: { diff: NodeStructureDiff }) {
   const total = diff.added.length + diff.removed.length + diff.changed.length;

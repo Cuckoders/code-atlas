@@ -28,6 +28,7 @@ import type {
   StoredAnalysisSnapshot,
 } from '../shared/graph';
 import type { RequestTrace } from '../shared/request-trace';
+import type { SourceEditor } from '../shared/source-editor';
 import { AtlasGraphNode, type AtlasGraphNodeData } from './components/AtlasGraphNode';
 import { DiagnosticsMenu } from './components/DiagnosticsMenu';
 import { GraphZoneNode, type GraphZoneNodeData } from './components/GraphZoneNode';
@@ -38,6 +39,7 @@ import { RequestTraceEdge, type RequestTraceEdgeData } from './components/Reques
 import { RequestTracePanel } from './components/RequestTracePanel';
 import { apiFetch, chooseProjectDirectory, hasNativeDirectoryPicker } from './desktop';
 import { layoutAtlasGraph, type GraphLayoutMode } from './graph-layout';
+import { openNodeInEditor, sourceLocationForNode } from './source-editor';
 import type { TracePlaybackOptions } from './trace-playback';
 
 const nodeTypes = { atlas: AtlasGraphNode, serviceZone: GraphZoneNode, layerZone: GraphZoneNode };
@@ -47,6 +49,7 @@ const ArchitectureConstructor = lazy(() => import('./components/ArchitectureCons
 const RuntimeTracePanel = lazy(() => import('./components/RuntimeTracePanel'));
 const ALL_KINDS: NodeKind[] = ['project', 'service', 'database', 'module', 'controller', 'class', 'interface', 'function'];
 const SIDEBAR_STORAGE_KEY = 'code-atlas:ui:sidebar:v1';
+const SOURCE_EDITOR_STORAGE_KEY = 'code-atlas:source-editor:v1';
 
 const COLOR_BY_KIND: Record<NodeKind, string> = {
   project: '#f4cd72',
@@ -70,6 +73,7 @@ export function App() {
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [workspaceMode, setWorkspaceMode] = useState<'map' | 'constructor'>('map');
   const [sidebarOpen, setSidebarOpen] = useState(() => readSidebarPreference());
+  const [sourceEditor, setSourceEditor] = useState<SourceEditor>(() => readSourceEditorPreference());
   const [loading, setLoading] = useState(true);
   const [jobStatus, setJobStatus] = useState<AnalysisJobStatus | null>(null);
   const [jobProgress, setJobProgress] = useState<AnalysisProgress | null>(null);
@@ -238,6 +242,14 @@ export function App() {
     }
   }, [sidebarOpen]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SOURCE_EDITOR_STORAGE_KEY, sourceEditor);
+    } catch {
+      // Editor choice remains active for this session when storage is unavailable.
+    }
+  }, [sourceEditor]);
+
   const focusedGraph = useMemo(() => {
     if (!analysis) return { nodes: [] as AtlasNode[], edges: [] as AtlasEdge[] };
     return createFocusedGraph(analysis.nodes, analysis.edges, focusNode?.id);
@@ -361,13 +373,25 @@ export function App() {
     setRuntimePanelOpen(false);
   }, []);
 
-  const handleNodeDoubleClick = useCallback<NodeMouseHandler>((_event, flowNode) => {
+  const openNodeSource = useCallback(async (node: AtlasNode, line?: number) => {
+    if (!analysis) throw new Error('Сначала загрузите проект.');
+    await openNodeInEditor(analysis.summary.rootPath, node, sourceEditor, line);
+  }, [analysis, sourceEditor]);
+
+  const handleNodeDoubleClick = useCallback<NodeMouseHandler>((event, flowNode) => {
     const atlas = (flowNode.data as Partial<AtlasGraphNodeData>).atlas;
     if (!atlas) return;
+    const openSource = event.metaKey || event.ctrlKey || !diveableIds.has(atlas.id);
+    if (openSource && sourceLocationForNode(atlas)) {
+      void openNodeSource(atlas).catch((openError) => {
+        setError(openError instanceof Error ? openError.message : 'Не удалось открыть исходник.');
+      });
+      return;
+    }
     if (!diveableIds.has(atlas.id)) return;
     setFocusNode(atlas);
     setSelectedNode(null);
-  }, [diveableIds]);
+  }, [diveableIds, openNodeSource]);
 
   const changeViewMode = useCallback((mode: '2d' | '3d') => {
     startTransition(() => setViewMode(mode));
@@ -742,6 +766,9 @@ export function App() {
           canDive={Boolean(selectedNode && diveableIds.has(selectedNode.id))}
           onDive={diveIntoSelected}
           diagnostics={selectedDiagnostics}
+          sourceEditor={sourceEditor}
+          onSourceEditorChange={setSourceEditor}
+          onOpenSource={openNodeSource}
         />
       ) : null}
     </main>
@@ -765,6 +792,16 @@ function readSidebarPreference(): boolean {
   } catch {
     return true;
   }
+}
+
+function readSourceEditorPreference(): SourceEditor {
+  try {
+    const stored = window.localStorage.getItem(SOURCE_EDITOR_STORAGE_KEY);
+    if (stored === 'vscode' || stored === 'cursor' || stored === 'system' || stored === 'simple') return stored;
+  } catch {
+    // Use VS Code when storage is unavailable.
+  }
+  return 'vscode';
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
