@@ -136,3 +136,34 @@ export interface ProjectAnalysis {
   diagnostics: ProjectDiagnostic[];
   warnings: string[];
 }
+
+export type AnalysisJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export interface AnalysisJob {
+  id: string;
+  status: AnalysisJobStatus;
+  projectPath: string;
+  compareRef?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  snapshotId?: string;
+  error?: string;
+}
+
+export interface AnalysisSnapshotSummary {
+  id: string;
+  createdAt: string;
+  projectName: string;
+  projectPath: string;
+  compareRef?: string;
+  filesScanned: number;
+  nodeCount: number;
+  edgeCount: number;
+  durationMs: number;
+}
+
+export interface StoredAnalysisSnapshot {
+  snapshot: AnalysisSnapshotSummary;
+  analysis: ProjectAnalysis;
+}

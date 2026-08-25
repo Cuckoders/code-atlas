@@ -77,6 +77,16 @@ button { color: inherit; }
 .language-bar i { display: block; height: 100%; background: linear-gradient(90deg, #5279a1, #7ec8f7); }
 .tag-list { display: flex; flex-wrap: wrap; gap: 5px; }
 .tag-list span { padding: 5px 7px; border: 1px solid #25302f; border-radius: 4px; color: #91b7ac; background: #101816; font: 8px 'DM Mono'; }
+.snapshot-list { display: grid; gap: 5px; }
+.snapshot-list button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 8px; border: 1px solid #242d37; border-radius: 6px; background: #0f131a; text-align: left; cursor: pointer; }
+.snapshot-list button:hover:not(:disabled) { border-color: #3c4b55; background: #121922; }
+.snapshot-list button.is-active { border-color: #3a665b; background: #111c19; cursor: default; }
+.snapshot-list button:disabled:not(.is-active) { opacity: .5; cursor: default; }
+.snapshot-list button > span { min-width: 0; }
+.snapshot-list strong, .snapshot-list small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.snapshot-list strong { max-width: 125px; color: #aeb9c7; font: 8px 'DM Mono'; }
+.snapshot-list small { margin-top: 3px; color: #515d6c; font-size: 7px; }
+.snapshot-list i { flex: none; color: #668b81; font: 7px 'DM Mono'; font-style: normal; }
 .git-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .git-stats > div { display: grid; padding: 8px; border: 1px solid #202733; border-radius: 5px; background: #0f131a; }
 .git-stats strong { color: #c1cad6; font: 500 12px 'DM Mono'; }

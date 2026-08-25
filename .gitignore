@@ -8,3 +8,4 @@ dist-server/
 !.env.example
 .playwright-cli/
 output/playwright/
+.code-atlas/

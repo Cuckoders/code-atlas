@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import type { NodeKind, ProjectDiagnostic, ProjectSummary } from '../../shared/graph';
+import type { AnalysisSnapshotSummary, NodeKind, ProjectDiagnostic, ProjectSummary } from '../../shared/graph';
 
 interface ProjectSidebarProps {
   summary: ProjectSummary;
@@ -8,6 +8,9 @@ interface ProjectSidebarProps {
   onToggleKind: (kind: NodeKind) => void;
   onSelectDiagnostic: (diagnostic: ProjectDiagnostic) => void;
   onCompare: (reference: string) => void;
+  snapshots: AnalysisSnapshotSummary[];
+  activeSnapshotId: string | null;
+  onOpenSnapshot: (snapshotId: string) => void;
   loading: boolean;
 }
 
@@ -21,6 +24,13 @@ const FILTERS: Array<{ kind: NodeKind; label: string }> = [
   { kind: 'function', label: 'Функции' },
 ];
 
+const SNAPSHOT_DATE = new Intl.DateTimeFormat('ru', {
+  day: '2-digit',
+  month: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
 export function ProjectSidebar({
   summary,
   diagnostics,
@@ -28,6 +38,9 @@ export function ProjectSidebar({
   onToggleKind,
   onSelectDiagnostic,
   onCompare,
+  snapshots,
+  activeSnapshotId,
+  onOpenSnapshot,
   loading,
 }: ProjectSidebarProps) {
   const [compareRef, setCompareRef] = useState('main');
@@ -50,6 +63,27 @@ export function ProjectSidebar({
         <article><strong>{summary.modules}</strong><span>модулей</span></article>
         <article><strong>{summary.symbols}</strong><span>символов</span></article>
         <article><strong>{summary.filesScanned}</strong><span>файлов</span></article>
+      </section>
+
+      <section className="sidebar-section snapshot-section">
+        <div className="section-heading"><h2>Снимки</h2><span>{snapshots.length}</span></div>
+        {snapshots.length ? (
+          <div className="snapshot-list">
+            {snapshots.slice(0, 5).map((snapshot) => (
+              <button
+                type="button"
+                className={snapshot.id === activeSnapshotId ? 'is-active' : ''}
+                disabled={loading || snapshot.id === activeSnapshotId}
+                key={snapshot.id}
+                onClick={() => onOpenSnapshot(snapshot.id)}
+                title={snapshot.projectPath}
+              >
+                <span><strong>{snapshot.projectName}</strong><small>{SNAPSHOT_DATE.format(new Date(snapshot.createdAt))}</small></span>
+                <i>{snapshot.compareRef ? `Δ ${snapshot.compareRef}` : `${snapshot.nodeCount} уз.`}</i>
+              </button>
+            ))}
+          </div>
+        ) : <p className="diagnostic-empty">Фоновые снимки появятся после анализа проекта</p>}
       </section>
 
       <section className="sidebar-section">

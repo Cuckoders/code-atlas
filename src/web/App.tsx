@@ -1,4 +1,4 @@
-import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -10,7 +10,17 @@ import {
   type Node,
   type NodeMouseHandler,
 } from '@xyflow/react';
-import type { AtlasEdge, AtlasNode, NodeKind, ProjectAnalysis, ProjectDiagnostic } from '../shared/graph';
+import type {
+  AnalysisJob,
+  AnalysisJobStatus,
+  AnalysisSnapshotSummary,
+  AtlasEdge,
+  AtlasNode,
+  NodeKind,
+  ProjectAnalysis,
+  ProjectDiagnostic,
+  StoredAnalysisSnapshot,
+} from '../shared/graph';
 import { AtlasGraphNode, type AtlasGraphNodeData } from './components/AtlasGraphNode';
 import { Inspector } from './components/Inspector';
 import { ProjectSidebar } from './components/ProjectSidebar';
@@ -51,7 +61,18 @@ export function App() {
   const [focusNode, setFocusNode] = useState<AtlasNode | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [loading, setLoading] = useState(true);
+  const [jobStatus, setJobStatus] = useState<AnalysisJobStatus | null>(null);
+  const [snapshots, setSnapshots] = useState<AnalysisSnapshotSummary[]>([]);
+  const [activeSnapshotId, setActiveSnapshotId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const activeRequest = useRef<AbortController | null>(null);
+
+  const applyAnalysis = useCallback((nextAnalysis: ProjectAnalysis, snapshotId: string | null = null) => {
+    setAnalysis(nextAnalysis);
+    setActiveSnapshotId(snapshotId);
+    setSelectedNode(null);
+    setFocusNode(null);
+  }, []);
 
   const loadAnalysis = useCallback(async (url: string, init?: RequestInit) => {
     setLoading(true);
@@ -60,19 +81,99 @@ export function App() {
       const response = await fetch(url, init);
       const payload = await response.json() as ProjectAnalysis | { error: string };
       if (!response.ok || 'error' in payload) throw new Error('error' in payload ? payload.error : 'Ошибка анализа');
-      setAnalysis(payload);
-      setSelectedNode(null);
-      setFocusNode(null);
+      applyAnalysis(payload);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Неизвестная ошибка');
     } finally {
       setLoading(false);
     }
+  }, [applyAnalysis]);
+
+  const loadSnapshots = useCallback(async () => {
+    const response = await fetch('/api/snapshots?limit=8');
+    if (!response.ok) throw new Error('Не удалось загрузить список снимков.');
+    setSnapshots(await response.json() as AnalysisSnapshotSummary[]);
   }, []);
+
+  const runBackgroundAnalysis = useCallback(async (path: string, compareRef?: string) => {
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    setLoading(true);
+    setJobStatus('queued');
+    setError(null);
+    try {
+      const createResponse = await fetch('/api/analysis-jobs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path, ...(compareRef ? { compareRef } : {}) }),
+        signal: controller.signal,
+      });
+      const created = await createResponse.json() as AnalysisJob | { error: string };
+      if (!createResponse.ok || 'error' in created) {
+        throw new Error('error' in created ? created.error : 'Не удалось создать задание анализа.');
+      }
+      let job = created;
+      while (job.status === 'queued' || job.status === 'running') {
+        setJobStatus(job.status);
+        await abortableDelay(300, controller.signal);
+        const statusResponse = await fetch(`/api/analysis-jobs/${job.id}`, { signal: controller.signal });
+        const statusPayload = await statusResponse.json() as AnalysisJob | { error: string };
+        if (!statusResponse.ok || 'error' in statusPayload) {
+          throw new Error('error' in statusPayload ? statusPayload.error : 'Не удалось получить статус задания.');
+        }
+        job = statusPayload;
+      }
+      setJobStatus(job.status);
+      if (job.status === 'failed' || !job.snapshotId) throw new Error(job.error ?? 'Анализ завершился с ошибкой.');
+
+      const snapshotResponse = await fetch(`/api/snapshots/${job.snapshotId}`, { signal: controller.signal });
+      const stored = await snapshotResponse.json() as StoredAnalysisSnapshot | { error: string };
+      if (!snapshotResponse.ok || 'error' in stored) {
+        throw new Error('error' in stored ? stored.error : 'Не удалось открыть готовый снимок.');
+      }
+      applyAnalysis(stored.analysis, stored.snapshot.id);
+      await loadSnapshots();
+    } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
+      setError(requestError instanceof Error ? requestError.message : 'Неизвестная ошибка');
+    } finally {
+      if (activeRequest.current === controller) {
+        activeRequest.current = null;
+        setJobStatus(null);
+        setLoading(false);
+      }
+    }
+  }, [applyAnalysis, loadSnapshots]);
+
+  const openSnapshot = useCallback(async (snapshotId: string) => {
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/snapshots/${snapshotId}`, { signal: controller.signal });
+      const payload = await response.json() as StoredAnalysisSnapshot | { error: string };
+      if (!response.ok || 'error' in payload) throw new Error('error' in payload ? payload.error : 'Не удалось открыть снимок.');
+      applyAnalysis(payload.analysis, payload.snapshot.id);
+    } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
+      setError(requestError instanceof Error ? requestError.message : 'Неизвестная ошибка');
+    } finally {
+      if (activeRequest.current === controller) {
+        activeRequest.current = null;
+        setLoading(false);
+      }
+    }
+  }, [applyAnalysis]);
 
   useEffect(() => {
     void loadAnalysis('/api/demo');
-  }, [loadAnalysis]);
+    void loadSnapshots().catch(() => undefined);
+  }, [loadAnalysis, loadSnapshots]);
+
+  useEffect(() => () => activeRequest.current?.abort(), []);
 
   const focusedGraph = useMemo(() => {
     if (!analysis) return { nodes: [] as AtlasNode[], edges: [] as AtlasEdge[] };
@@ -102,11 +203,7 @@ export function App() {
   const handleAnalyze = (event: React.FormEvent) => {
     event.preventDefault();
     if (!projectPath.trim()) return;
-    void loadAnalysis('/api/analyze', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ path: projectPath }),
-    });
+    void runBackgroundAnalysis(projectPath.trim());
   };
 
   const handleNodeClick = useCallback<NodeMouseHandler>((_event, flowNode) => {
@@ -153,12 +250,8 @@ export function App() {
 
   const compareWithGitReference = useCallback((compareRef: string) => {
     if (!analysis) return;
-    void loadAnalysis('/api/analyze', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ path: analysis.summary.rootPath, compareRef }),
-    });
-  }, [analysis, loadAnalysis]);
+    void runBackgroundAnalysis(analysis.summary.rootPath, compareRef);
+  }, [analysis, runBackgroundAnalysis]);
 
   const selectedDiagnostics = useMemo(() => (
     selectedNode ? analysis?.diagnostics.filter((item) => item.nodeIds.includes(selectedNode.id)) ?? [] : []
@@ -191,7 +284,9 @@ export function App() {
             placeholder="Абсолютный путь к проекту"
             aria-label="Путь к проекту"
           />
-          <button type="submit" disabled={loading || !projectPath.trim()}>{loading ? 'Анализ…' : 'Построить карту'}</button>
+          <button type="submit" disabled={loading || !projectPath.trim()}>
+            {jobStatus === 'queued' ? 'В очереди…' : jobStatus === 'running' ? 'Индексируем…' : 'Построить карту'}
+          </button>
         </form>
         <div className="view-switch" aria-label="Режим карты">
           <button className={viewMode === '2d' ? 'is-active' : ''} type="button" onClick={() => changeViewMode('2d')}>2D</button>
@@ -212,6 +307,9 @@ export function App() {
         onToggleKind={toggleKind}
         onSelectDiagnostic={selectDiagnostic}
         onCompare={compareWithGitReference}
+        snapshots={snapshots}
+        activeSnapshotId={activeSnapshotId}
+        onOpenSnapshot={openSnapshot}
         loading={loading}
       />
 
@@ -279,7 +377,12 @@ export function App() {
           </Suspense>
         )}
 
-        {loading ? <div className="loading-overlay"><span />Анализируем исходники…</div> : null}
+        {loading ? (
+          <div className="loading-overlay">
+            <span />
+            {jobStatus === 'queued' ? 'Задание ожидает worker…' : jobStatus === 'running' ? 'Индексируем и сохраняем снимок…' : 'Загружаем карту…'}
+          </div>
+        ) : null}
       </section>
 
       <Inspector
@@ -291,6 +394,24 @@ export function App() {
       />
     </main>
   );
+}
+
+function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const onAbort = () => {
+      window.clearTimeout(timeout);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    const timeout = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function LoadingScreen({ label }: { label: string }) {

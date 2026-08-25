@@ -7,6 +7,8 @@
 - интерактивная 2D-карта с панорамированием, масштабом, minimap и перетаскиванием узлов;
 - полноценная 3D-карта с orbit-навигацией, глубиной, перемещением узлов, фокусировкой камеры и общим инспектором;
 - импорт проекта по абсолютному локальному пути;
+- фоновая очередь анализа: API сразу возвращает идентификатор задания, а интерфейс показывает состояния очереди и индексирования;
+- сохранение до 50 последних снимков в локальную SQLite-базу и повторное открытие карты без сканирования проекта;
 - поиск и фильтры слоев;
 - сервисы по manifest-файлам (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, Maven/Gradle и другие);
 - языковая статистика для TypeScript/JavaScript, Python, Java/Kotlin, Go, Rust, C#, PHP, Ruby, Swift, Dart и web-файлов;
@@ -31,7 +33,7 @@
 
 ## Запуск
 
-Требуется Node.js 22+.
+Требуется Node.js 22.5+ — хранилище использует встроенный модуль `node:sqlite`.
 
 ```bash
 npm install
@@ -60,23 +62,29 @@ npm run build
 
 ```text
 Browser / React Flow
-        │  GET /api/demo · POST /api/analyze
+        │  POST job · poll status · open snapshot
         ▼
-Fastify local API
-        │
-        ▼
-Static analyzer ──► normalized graph schema ──┬─► 2D renderer
-      │                                       └─► lazy 3D renderer
-      ├─ manifests
-      ├─ source parsers
-      └─ infra detectors
+Fastify local API ──► background queue ──► static analyzer
+                                               │
+                      SQLite snapshots ◄── normalized graph ──┬─► 2D renderer
+                                               │              └─► lazy 3D renderer
+                                               ├─ manifests
+                                               ├─ source parsers
+                                               └─ infra detectors
 ```
 
-Сервер слушает только `127.0.0.1`, не запускает код анализируемого проекта и не переходит по симлинкам.
+Сервер слушает только `127.0.0.1`, не запускает код анализируемого проекта и не переходит по симлинкам. По умолчанию снимки лежат в `.code-atlas/code-atlas.sqlite`; путь можно переопределить переменной `CODE_ATLAS_DATABASE`.
+
+Фоновый API:
+
+- `POST /api/analysis-jobs` — поставить анализ в очередь;
+- `GET /api/analysis-jobs/:id` — получить состояние задания;
+- `GET /api/snapshots` — список сохранённых снимков;
+- `GET /api/snapshots/:id` — открыть готовую карту.
 
 ## Следующий этап
 
 1. Семантический call graph через language servers для Java, Go, Rust, C# и PHP.
 2. Kotlin Tree-sitter WASM-адаптер.
-3. Фоновое индексирование больших монорепозиториев и хранение снимков в SQLite.
+3. Инкрементальное переиндексирование только изменившихся файлов.
 4. Desktop-оболочка Tauri для системного выбора папки.
