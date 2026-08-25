@@ -129,6 +129,10 @@ button { color: inherit; }
 .canvas-toolbar { position: absolute; inset: 0 0 auto 0; z-index: 5; height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid rgba(32, 38, 49, .75); background: rgba(9, 11, 16, .84); backdrop-filter: blur(12px); color: #a4adba; font-size: 10px; font-weight: 600; }
 .canvas-toolbar small { margin-left: 10px; color: #515b6b; font: 8px 'DM Mono'; }
 .canvas-toolbar__actions { display: flex; align-items: center; gap: 8px; }
+.graph-layout-toggle { display: flex; height: 30px; padding: 2px; border: 1px solid #29313c; border-radius: 6px; background: #0b0f15; }
+.graph-layout-toggle button { min-width: 58px; border: 0; border-radius: 4px; background: transparent; color: #596575; font: 8px 'DM Mono'; cursor: pointer; }
+.graph-layout-toggle button:hover { color: #9aa6b5; }
+.graph-layout-toggle button.is-active { color: #9ce5d0; background: #18242a; box-shadow: inset 0 0 0 1px rgba(126, 226, 197, .1); }
 .request-trace-toggle { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid #29343d; border-radius: 6px; background: #0e1419; color: #79988f; font: 8px 'DM Mono'; cursor: pointer; }
 .request-trace-toggle span { color: #7ee2c5; font-size: 12px; }
 .request-trace-toggle:hover, .request-trace-toggle.is-active { border-color: #456a60; color: #9ce5d0; background: #101d19; }
@@ -140,13 +144,31 @@ button { color: inherit; }
 .focus-breadcrumb button.is-current { color: #9ce9d3; }
 .search-field { display: flex; align-items: center; width: 240px; height: 30px; padding: 0 9px; border: 1px solid #242b36; border-radius: 6px; background: #0c0f15; color: #596476; }
 .search-field input { width: 100%; border: 0; outline: 0; padding-left: 7px; background: transparent; color: #cfd5df; font-size: 9px; }
+.graph-viewport { position: absolute; inset: 0; min-width: 0; transition: right .24s ease; }
 .canvas-shell .react-flow { padding-top: 52px; }
+.canvas-shell.is-request-panel-open .graph-viewport { right: 360px; }
+.canvas-shell.is-request-panel-open .graph-3d { right: 360px; }
 .react-flow__edge-text { font-family: 'DM Mono'; }
 .react-flow__controls { display: flex; border: 1px solid #28303b; border-radius: 7px; overflow: hidden; box-shadow: none; }
 .canvas-shell .atlas-map-controls { bottom: 160px; }
 .react-flow__controls-button { width: 30px; height: 28px; border: 0; border-right: 1px solid #28303b; background: #111620; fill: #778397; }
 .react-flow__controls-button:hover { background: #1a222d; }
 .react-flow__minimap { border: 1px solid #28303b; border-radius: 7px; background: #0c1017; }
+
+.graph-zone { width: 100%; height: 100%; border: 1px solid rgba(83, 105, 119, .22); border-radius: 18px; background: linear-gradient(135deg, rgba(18, 28, 35, .34), rgba(12, 16, 22, .13)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .018); pointer-events: none; transition: border-color .24s, background .24s, box-shadow .24s; }
+.graph-zone header { display: flex; align-items: center; gap: 8px; height: 42px; padding: 0 16px; border-bottom: 1px solid rgba(83, 105, 119, .14); color: #667382; font: 8px 'DM Mono'; text-transform: uppercase; letter-spacing: .08em; }
+.graph-zone header i { width: 6px; height: 6px; border: 1px solid #4b7067; border-radius: 50%; background: #1b3831; box-shadow: 0 0 10px rgba(126, 226, 197, .18); }
+.graph-zone header strong { color: #8896a4; font-weight: 600; }
+.graph-zone header span { margin-left: auto; color: #44505d; font-size: 7px; letter-spacing: 0; text-transform: none; }
+.graph-zone--layer { border-radius: 12px; background: linear-gradient(180deg, rgba(18, 24, 32, .32), rgba(10, 13, 18, .1)); }
+.graph-zone--layer header { display: grid; align-content: center; gap: 3px; height: 48px; padding: 0 12px; }
+.graph-zone--layer header i { display: none; }
+.graph-zone--layer header span { margin: 0; }
+.graph-zone.is-request-path { border-color: rgba(126, 226, 197, .44); background: linear-gradient(135deg, rgba(25, 55, 48, .4), rgba(12, 20, 21, .15)); box-shadow: inset 0 0 28px rgba(80, 202, 168, .055); }
+.graph-zone.is-request-failure { border-color: rgba(240, 111, 131, .52); background: linear-gradient(135deg, rgba(61, 25, 33, .4), rgba(22, 13, 18, .16)); }
+.request-trace-edge__label { position: absolute; z-index: 2; padding: 2px 4px; border-radius: 3px; color: #98ead4; background: rgba(13, 16, 23, .86); font: 8px 'DM Mono'; pointer-events: none; }
+.request-trace-edge__packet { fill: #dffff6; stroke: #4ab899; stroke-width: 2px; filter: drop-shadow(0 0 5px #7ee2c5); pointer-events: none; }
+.request-trace-edge__impact { fill: rgba(240, 111, 131, .16); stroke: #f06f83; stroke-width: 2px; transform-box: fill-box; transform-origin: center; animation: request-impact 1.25s ease-out infinite; pointer-events: none; }
 
 .graph-3d { position: absolute; inset: 52px 0 0; overflow: hidden; background: radial-gradient(circle at 50% 48%, #111a22 0%, #090b10 58%); }
 .graph-3d canvas { display: block; outline: 0; }
@@ -171,7 +193,7 @@ button { color: inherit; }
 .atlas-node--diff-removed .atlas-node__change { color: #df7888; }
 .atlas-node.is-request-path { border-color: #62cdb0; box-shadow: 0 0 0 1px rgba(126, 226, 197, .24), 0 0 24px rgba(79, 204, 170, .16); }
 .atlas-node.is-request-path .atlas-node__icon { border-color: #4e907f; color: #a3f4dd; }
-.atlas-node.is-request-failure { border-color: #f06f83; box-shadow: 0 0 0 1px rgba(240, 111, 131, .3), 0 0 28px rgba(240, 111, 131, .2); }
+.atlas-node.is-request-failure { border-color: #f06f83; box-shadow: 0 0 0 1px rgba(240, 111, 131, .3), 0 0 28px rgba(240, 111, 131, .2); animation: request-node-pulse 1.6s ease-in-out infinite; }
 .atlas-node.is-request-failure .atlas-node__icon { border-color: #9f4756; color: #ff9bad; background: #28141a; }
 .atlas-node__icon { flex: none; display: grid; place-items: center; width: 31px; height: 31px; margin-right: 10px; border: 1px solid #31404f; border-radius: 7px; color: #74b7ff; background: #101a24; font: 500 11px 'DM Mono'; }
 .atlas-node__body { min-width: 0; display: grid; }
@@ -303,6 +325,13 @@ button { color: inherit; }
 .empty-state h1 { margin: 0; color: #e0e5ed; font: 600 26px 'Manrope'; }.empty-state p { max-width: 420px; }.empty-state button { padding: 8px 13px; border: 1px solid #345047; border-radius: 6px; background: #102019; color: #82d8bf; cursor: pointer; }
 .orbit { position: relative; width: 100px; height: 100px; display: grid; place-items: center; border: 1px solid #25302e; border-radius: 50%; animation: spin 5s linear infinite; }.orbit:before { content: ''; position: absolute; inset: 15px; border: 1px dashed #263138; border-radius: 50%; }.orbit i { position: absolute; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: #7ee2c5; box-shadow: 0 0 12px #7ee2c5; }.orbit i:nth-child(2) { top: auto; bottom: 7px; left: 8px; background: #bf91ff; box-shadow: 0 0 12px #bf91ff; }.orbit .brand-mark { animation: spin 5s linear reverse infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes request-impact { 0% { opacity: .9; transform: scale(.55); } 75%, 100% { opacity: 0; transform: scale(2.4); } }
+@keyframes request-node-pulse { 0%, 100% { box-shadow: 0 0 0 1px rgba(240, 111, 131, .3), 0 0 22px rgba(240, 111, 131, .16); } 50% { box-shadow: 0 0 0 3px rgba(240, 111, 131, .14), 0 0 36px rgba(240, 111, 131, .3); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .request-trace-edge__packet { display: none; }
+  .request-trace-edge__impact, .atlas-node.is-request-failure { animation: none; }
+}
 
 @media (max-width: 1280px) {
   .app-shell { grid-template-columns: 220px minmax(0, 1fr); }

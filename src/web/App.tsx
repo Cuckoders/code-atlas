@@ -9,6 +9,7 @@ import {
   type Edge,
   type Node,
   type NodeMouseHandler,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 import type {
   AnalysisJob,
@@ -25,25 +26,18 @@ import type {
 } from '../shared/graph';
 import type { RequestTrace } from '../shared/request-trace';
 import { AtlasGraphNode, type AtlasGraphNodeData } from './components/AtlasGraphNode';
+import { GraphZoneNode, type GraphZoneNodeData } from './components/GraphZoneNode';
 import { Inspector } from './components/Inspector';
 import { ProjectSidebar } from './components/ProjectSidebar';
+import { RequestTraceEdge, type RequestTraceEdgeData } from './components/RequestTraceEdge';
 import { RequestTracePanel } from './components/RequestTracePanel';
 import { apiFetch, chooseProjectDirectory, hasNativeDirectoryPicker } from './desktop';
+import { layoutAtlasGraph, type GraphLayoutMode } from './graph-layout';
 
-const nodeTypes = { atlas: AtlasGraphNode };
+const nodeTypes = { atlas: AtlasGraphNode, serviceZone: GraphZoneNode, layerZone: GraphZoneNode };
+const edgeTypes = { requestTrace: RequestTraceEdge };
 const Graph3D = lazy(() => import('./components/Graph3D'));
 const ALL_KINDS: NodeKind[] = ['project', 'service', 'database', 'module', 'controller', 'class', 'interface', 'function'];
-
-const COLUMN_BY_KIND: Record<NodeKind, number> = {
-  project: 0,
-  service: 360,
-  database: 360,
-  module: 760,
-  controller: 760,
-  class: 1_160,
-  interface: 1_160,
-  function: 1_160,
-};
 
 const COLOR_BY_KIND: Record<NodeKind, string> = {
   project: '#f4cd72',
@@ -75,7 +69,9 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [requestPanelOpen, setRequestPanelOpen] = useState(false);
   const [requestTrace, setRequestTrace] = useState<RequestTrace | null>(null);
+  const [graphLayoutMode, setGraphLayoutMode] = useState<GraphLayoutMode>('services');
   const activeRequest = useRef<AbortController | null>(null);
+  const flowInstance = useRef<ReactFlowInstance | null>(null);
   const nativeDirectoryPicker = useMemo(() => hasNativeDirectoryPicker(), []);
 
   const applyAnalysis = useCallback((nextAnalysis: ProjectAnalysis, snapshotId: string | null = null) => {
@@ -239,9 +235,23 @@ export function App() {
   }, [analysis, focusNode]);
 
   const graph = useMemo(
-    () => createFlowGraph(filteredGraph.nodes, filteredGraph.edges, deferredSearch, requestTrace),
-    [deferredSearch, filteredGraph, requestTrace],
+    () => createFlowGraph(
+      filteredGraph.nodes,
+      filteredGraph.edges,
+      deferredSearch,
+      requestTrace,
+      graphLayoutMode,
+      analysis?.nodes ?? filteredGraph.nodes,
+      analysis?.edges ?? filteredGraph.edges,
+    ),
+    [analysis?.edges, analysis?.nodes, deferredSearch, filteredGraph, graphLayoutMode, requestTrace],
   );
+
+  useEffect(() => {
+    if (viewMode !== '2d' || !requestTrace || !flowInstance.current) return;
+    const frame = window.requestAnimationFrame(() => fitRequestPath(flowInstance.current, requestTrace));
+    return () => window.cancelAnimationFrame(frame);
+  }, [graphLayoutMode, requestPanelOpen, requestTrace, viewMode]);
 
   const handleAnalyze = (event: React.FormEvent) => {
     event.preventDefault();
@@ -262,12 +272,15 @@ export function App() {
   }, []);
 
   const handleNodeClick = useCallback<NodeMouseHandler>((_event, flowNode) => {
-    setSelectedNode((flowNode.data as AtlasGraphNodeData).atlas);
+    const atlas = (flowNode.data as Partial<AtlasGraphNodeData>).atlas;
+    if (!atlas) return;
+    setSelectedNode(atlas);
     setRequestPanelOpen(false);
   }, []);
 
   const handleNodeDoubleClick = useCallback<NodeMouseHandler>((_event, flowNode) => {
-    const atlas = (flowNode.data as AtlasGraphNodeData).atlas;
+    const atlas = (flowNode.data as Partial<AtlasGraphNodeData>).atlas;
+    if (!atlas) return;
     if (!diveableIds.has(atlas.id)) return;
     setFocusNode(atlas);
     setSelectedNode(null);
@@ -421,7 +434,7 @@ export function App() {
         loading={loading}
       />
 
-      <section className="canvas-shell">
+      <section className={`canvas-shell ${requestPanelOpen ? 'is-request-panel-open' : ''}`}>
         <div className="canvas-toolbar">
           <div>
             <span className="pulse" />
@@ -438,9 +451,25 @@ export function App() {
                 </span>
               ))}
             </nav>
-            <small>{graph.nodes.length} узлов · {graph.edges.length} связей</small>
+            <small>{filteredGraph.nodes.length} узлов · {graph.edges.length} связей</small>
           </div>
           <div className="canvas-toolbar__actions">
+            {viewMode === '2d' ? (
+              <div className="graph-layout-toggle" role="group" aria-label="Раскладка 2D-карты">
+                <button
+                  type="button"
+                  className={graphLayoutMode === 'services' ? 'is-active' : ''}
+                  aria-pressed={graphLayoutMode === 'services'}
+                  onClick={() => startTransition(() => setGraphLayoutMode('services'))}
+                >Сервисы</button>
+                <button
+                  type="button"
+                  className={graphLayoutMode === 'layers' ? 'is-active' : ''}
+                  aria-pressed={graphLayoutMode === 'layers'}
+                  onClick={() => startTransition(() => setGraphLayoutMode('layers'))}
+                >Слои</button>
+              </div>
+            ) : null}
             <button
               type="button"
               className={`request-trace-toggle ${requestPanelOpen ? 'is-active' : ''}`}
@@ -461,32 +490,41 @@ export function App() {
         {analysis.warnings.map((warning) => <div className="warning-banner" key={warning}>{warning}</div>)}
 
         {viewMode === '2d' ? (
-          <ReactFlow
-            nodes={graph.nodes}
-            edges={graph.edges}
-            nodeTypes={nodeTypes}
-            onNodeClick={handleNodeClick}
-            onNodeDoubleClick={handleNodeDoubleClick}
-            onPaneClick={() => setSelectedNode(null)}
-            fitView
-            fitViewOptions={{ padding: 0.24 }}
-            minZoom={0.18}
-            maxZoom={1.8}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background variant={BackgroundVariant.Dots} color="#29303c" gap={22} size={1.2} />
-            <Controls className="atlas-map-controls" position="bottom-right" showInteractive={false} />
-            <MiniMap
-              pannable
-              zoomable
-              position="bottom-right"
-              nodeColor={(node) => {
-                const data = node.data as AtlasGraphNodeData;
-                return data.requestTraceState === 'failure' ? '#f06f83' : data.requestTraceState === 'path' ? '#7ee2c5' : COLOR_BY_KIND[data.atlas.kind];
+          <div className="graph-viewport">
+            <ReactFlow
+              key={`${graphLayoutMode}:${focusNode?.id ?? 'root'}:${requestPanelOpen ? 'trace-open' : 'trace-closed'}`}
+              nodes={graph.nodes}
+              edges={graph.edges}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              onInit={(instance) => {
+                flowInstance.current = instance;
+                if (requestTrace) window.requestAnimationFrame(() => fitRequestPath(instance, requestTrace));
               }}
-              maskColor="rgba(6, 8, 13, .72)"
-            />
-          </ReactFlow>
+              onNodeClick={handleNodeClick}
+              onNodeDoubleClick={handleNodeDoubleClick}
+              onPaneClick={() => setSelectedNode(null)}
+              fitView
+              fitViewOptions={{ padding: 0.24 }}
+              minZoom={0.18}
+              maxZoom={1.8}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background variant={BackgroundVariant.Dots} color="#29303c" gap={22} size={1.2} />
+              <Controls className="atlas-map-controls" position="bottom-right" showInteractive={false} />
+              <MiniMap
+                pannable
+                zoomable
+                position="bottom-right"
+                nodeColor={(node) => {
+                  const data = node.data as Partial<AtlasGraphNodeData> & Partial<GraphZoneNodeData>;
+                  if (!data.atlas) return data.traceState === 'failure' ? '#6f2c39' : data.traceState === 'path' ? '#245c50' : '#16202a';
+                  return data.requestTraceState === 'failure' ? '#f06f83' : data.requestTraceState === 'path' ? '#7ee2c5' : COLOR_BY_KIND[data.atlas.kind];
+                }}
+                maskColor="rgba(6, 8, 13, .72)"
+              />
+            </ReactFlow>
+          </div>
         ) : (
           <Suspense fallback={<div className="loading-overlay"><span />Загружаем 3D-движок…</div>}>
             <Graph3D
@@ -594,10 +632,12 @@ function createFlowGraph(
   atlasEdges: AtlasEdge[],
   search: string,
   requestTrace: RequestTrace | null,
-): { nodes: Node<AtlasGraphNodeData>[]; edges: Edge[] } {
+  layoutMode: GraphLayoutMode,
+  hierarchyNodes: AtlasNode[],
+  hierarchyEdges: AtlasEdge[],
+): { nodes: Node[]; edges: Edge[] } {
   const visibleAtlasNodes = atlasNodes;
   const visibleIds = new Set(visibleAtlasNodes.map((node) => node.id));
-  const indexByColumn = new Map<number, number>();
   const matchingIds = new Set(
     search
       ? visibleAtlasNodes
@@ -608,16 +648,35 @@ function createFlowGraph(
   const requestNodeIds = new Set(requestTrace?.nodeIds ?? []);
   const requestEdgeIds = new Set(requestTrace?.edgeIds ?? []);
   const failureNodeId = requestTrace?.probableFailure?.nodeId;
+  const traceEdgeIndex = new Map((requestTrace?.edgeIds ?? []).map((edgeId, index) => [edgeId, index]));
+  const layout = layoutAtlasGraph(visibleAtlasNodes, atlasEdges, layoutMode, hierarchyNodes, hierarchyEdges);
 
-  const nodes = visibleAtlasNodes.map((atlas): Node<AtlasGraphNodeData> => {
-    const x = COLUMN_BY_KIND[atlas.kind];
-    const index = indexByColumn.get(x) ?? 0;
-    indexByColumn.set(x, index + 1);
-    const spread = x === 0 ? 0 : index * 122;
+  const zoneNodes: Node<GraphZoneNodeData>[] = layout.zones.map((zone) => {
+    const containsFailure = Boolean(failureNodeId && zone.nodeIds.includes(failureNodeId));
+    const containsPath = zone.nodeIds.some((nodeId) => requestNodeIds.has(nodeId));
+    return {
+      id: zone.id,
+      type: zone.kind === 'service' ? 'serviceZone' : 'layerZone',
+      position: zone.position,
+      data: {
+        kind: zone.kind,
+        title: zone.title,
+        subtitle: zone.subtitle,
+        traceState: containsFailure ? 'failure' : containsPath ? 'path' : undefined,
+      },
+      style: { width: zone.width, height: zone.height, zIndex: -1 },
+      draggable: false,
+      selectable: false,
+      connectable: false,
+      focusable: false,
+    };
+  });
+
+  const atlasFlowNodes = visibleAtlasNodes.map((atlas): Node<AtlasGraphNodeData> => {
     return {
       id: atlas.id,
       type: 'atlas',
-      position: { x, y: spread },
+      position: layout.positions.get(atlas.id) ?? { x: 0, y: 0 },
       data: {
         atlas,
         dimmed: Boolean(search) && !matchingIds.has(atlas.id) && !requestNodeIds.has(atlas.id),
@@ -633,13 +692,19 @@ function createFlowGraph(
     .map((item): Edge => {
       const isRequestPath = requestEdgeIds.has(item.id);
       const leadsToFailure = isRequestPath && item.target === failureNodeId;
+      const traceIndex = traceEdgeIndex.get(item.id) ?? 0;
       return {
         id: item.id,
         source: item.source,
         target: item.target,
         label: item.kind === 'imports' ? undefined : item.kind,
-        type: 'smoothstep',
-        animated: isRequestPath || (item.change !== 'removed' && (item.change === 'added' || item.kind === 'imports' || item.kind === 'calls')),
+        type: isRequestPath ? 'requestTrace' : 'smoothstep',
+        data: isRequestPath ? {
+          traceIndex,
+          traceCount: requestTrace?.edgeIds.length ?? 1,
+          leadsToFailure,
+        } satisfies RequestTraceEdgeData : undefined,
+        animated: !isRequestPath && item.change !== 'removed' && (item.change === 'added' || item.kind === 'imports' || item.kind === 'calls'),
         markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
         style: {
           stroke: leadsToFailure ? '#f06f83' : isRequestPath ? '#7ee2c5' : item.change === 'removed' ? '#b95768' : item.change === 'added' ? '#c9ae55' : item.kind === 'imports' ? '#416b8c' : item.kind === 'calls' ? '#d18b55' : item.kind === 'uses' ? '#9b6586' : '#3b4350',
@@ -652,7 +717,16 @@ function createFlowGraph(
       };
     });
 
-  return { nodes, edges };
+  return { nodes: [...zoneNodes, ...atlasFlowNodes], edges };
+}
+
+function fitRequestPath(instance: ReactFlowInstance | null, trace: RequestTrace): void {
+  if (!instance) return;
+  const nodes = trace.nodeIds
+    .map((nodeId) => instance.getNode(nodeId))
+    .filter((node): node is Node => Boolean(node));
+  if (nodes.length === 0) return;
+  void instance.fitView({ nodes, padding: 0.34, duration: 360, maxZoom: 0.92 });
 }
 
 function filterAtlasGraph(
