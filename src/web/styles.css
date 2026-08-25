@@ -181,6 +181,16 @@ button { color: inherit; }
 .member__kind--route { color: #bf91ff; background: #20172a; }
 .member strong { display: block; color: #bdc5d0; font: 8px 'DM Mono'; overflow-wrap: anywhere; }
 .member small { color: #555f6e; font-size: 7px; }
+.structure-diff__list { display: grid; gap: 6px; }
+.member-diff { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; padding: 9px; border: 1px solid #29313b; border-radius: 6px; background: #0f1319; }
+.member-diff__status { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; font: 600 11px 'DM Mono'; }
+.member-diff strong, .member-diff code { display: block; overflow-wrap: anywhere; font: 8px/1.45 'DM Mono'; }
+.member-diff small { color: #596473; font-size: 7px; }
+.member-diff--added { border-left: 2px solid #7ac99f; }.member-diff--added .member-diff__status { color: #83d5aa; background: #12221a; }
+.member-diff--removed { border-left: 2px solid #c45d70; }.member-diff--removed .member-diff__status { color: #df7888; background: #251318; }
+.member-diff--changed { border-left: 2px solid #5d9dce; }.member-diff--changed .member-diff__status { color: #79b8e8; background: #101d27; }
+.member-diff__before { margin-top: 4px; color: #b66775; text-decoration: line-through; }
+.member-diff__after { color: #78c99f; }
 .inspector-diagnostics { display: grid; gap: 7px; }
 .diagnostic-card { padding: 10px; border: 1px solid #29313c; border-left-width: 2px; border-radius: 6px; background: #10141b; }
 .diagnostic-card--error { border-left-color: #eb6f83; }

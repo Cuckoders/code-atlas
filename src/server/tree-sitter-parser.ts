@@ -223,10 +223,12 @@ function methodMember(node: SyntaxNode, name: string): SymbolMember {
   const parameters = node.childForFieldName('parameters')?.text
     ?? node.namedChildren.find((child) => /parameter/.test(child.type))?.text
     ?? '()';
+  const returnType = node.childForFieldName('return_type')?.text
+    ?? node.childForFieldName('type')?.text;
   return {
     name,
     kind: 'method',
-    signature: `${name}${truncate(parameters.replace(/\s+/g, ' '), 120)}`,
+    signature: `${name}${truncate(parameters.replace(/\s+/g, ' '), 120)}${returnType ? `: ${truncate(returnType.replace(/\s+/g, ' '), 80)}` : ''}`,
     line: node.startPosition.row + 1,
   };
 }

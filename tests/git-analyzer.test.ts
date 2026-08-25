@@ -18,11 +18,22 @@ describe('Git project analysis', () => {
       await git(temporaryRoot, ['config', 'user.email', 'atlas@example.test']);
       await fs.writeFile(path.join(temporaryRoot, 'package.json'), '{"name":"git-fixture"}');
       await fs.writeFile(path.join(temporaryRoot, 'legacy.ts'), 'export class LegacyService {}');
+      await fs.writeFile(path.join(temporaryRoot, 'service.ts'), `
+        export class OrderService {
+          run(input: string): boolean { return Boolean(input); }
+        }
+      `);
       await fs.writeFile(path.join(temporaryRoot, 'engine.ts'), `${sourceWithLines(205, 'first')}\nimport { LegacyService } from './legacy';\nexport const legacy = new LegacyService();`);
       await commitAll(temporaryRoot, 'initial');
       await git(temporaryRoot, ['branch', 'baseline']);
 
       await fs.rm(path.join(temporaryRoot, 'legacy.ts'));
+      await fs.writeFile(path.join(temporaryRoot, 'service.ts'), `
+        export class OrderService {
+          run(input: number): Promise<boolean> { return Promise.resolve(input > 0); }
+          stop(reason?: string): void {}
+        }
+      `);
       await fs.writeFile(path.join(temporaryRoot, 'engine.ts'), sourceWithLines(206, 'second'));
       await commitAll(temporaryRoot, 'second');
       await fs.writeFile(path.join(temporaryRoot, 'engine.ts'), sourceWithLines(207, 'third'));
@@ -38,9 +49,9 @@ describe('Git project analysis', () => {
         contributors: ['Atlas Tester'],
         comparison: expect.objectContaining({
           baseRef: 'baseline',
-          modified: 1,
+          modified: 2,
           deleted: 1,
-          architecture: expect.objectContaining({ nodesModified: 1, nodesRemoved: 2 }),
+          architecture: expect.objectContaining({ nodesModified: 3, nodesRemoved: 2 }),
         }),
       }));
       expect(module?.metadata).toEqual(expect.objectContaining({
@@ -54,6 +65,14 @@ describe('Git project analysis', () => {
         expect.objectContaining({ label: 'legacy.ts', metadata: expect.objectContaining({ diffStatus: 'removed' }) }),
         expect.objectContaining({ label: 'LegacyService', metadata: expect.objectContaining({ diffStatus: 'removed' }) }),
       ]));
+      expect(result.nodes.find((node) => node.label === 'OrderService')?.structureDiff).toEqual(expect.objectContaining({
+        added: [expect.objectContaining({ name: 'stop' })],
+        changed: [expect.objectContaining({
+          name: 'run',
+          before: expect.objectContaining({ signature: 'run(input: string): boolean' }),
+          after: expect.objectContaining({ signature: 'run(input: number): Promise<boolean>' }),
+        })],
+      }));
       expect(result.edges.some((edge) => edge.change === 'removed')).toBe(true);
     } finally {
       await fs.rm(temporaryRoot, { recursive: true, force: true });

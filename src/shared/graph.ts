@@ -53,6 +53,19 @@ export interface SymbolMember {
   line?: number;
 }
 
+export interface ChangedSymbolMember {
+  name: string;
+  kind: SymbolMember['kind'];
+  before: SymbolMember;
+  after: SymbolMember;
+}
+
+export interface NodeStructureDiff {
+  added: SymbolMember[];
+  removed: SymbolMember[];
+  changed: ChangedSymbolMember[];
+}
+
 export interface AtlasNode {
   id: string;
   label: string;
@@ -61,6 +74,7 @@ export interface AtlasNode {
   language?: string;
   subtitle?: string;
   members?: SymbolMember[];
+  structureDiff?: NodeStructureDiff;
   metadata?: Record<string, string | number | boolean | string[]>;
 }
 

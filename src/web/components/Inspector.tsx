@@ -1,4 +1,4 @@
-import type { AtlasNode, NodeKind, ProjectDiagnostic } from '../../shared/graph';
+import type { AtlasNode, NodeKind, NodeStructureDiff, ProjectDiagnostic, SymbolMember } from '../../shared/graph';
 
 interface InspectorProps {
   node: AtlasNode | null;
@@ -57,6 +57,8 @@ export function Inspector({ node, onClose, canDive, onDive, diagnostics }: Inspe
             </section>
           ) : null}
 
+          {node.structureDiff ? <StructureDiff diff={node.structureDiff} /> : null}
+
           {node.members?.length ? (
             <section className="inspector__section">
               <div className="section-heading">
@@ -92,4 +94,47 @@ export function Inspector({ node, onClose, canDive, onDive, diagnostics }: Inspe
       ) : null}
     </aside>
   );
+}
+
+function StructureDiff({ diff }: { diff: NodeStructureDiff }) {
+  const total = diff.added.length + diff.removed.length + diff.changed.length;
+  return (
+    <section className="inspector__section structure-diff">
+      <div className="section-heading"><h3>Изменения структуры</h3><span>{total}</span></div>
+      <div className="structure-diff__list">
+        {diff.added.map((member, index) => (
+          <MemberDiffCard key={`added:${member.kind}:${member.name}:${index}`} status="added" member={member} />
+        ))}
+        {diff.removed.map((member, index) => (
+          <MemberDiffCard key={`removed:${member.kind}:${member.name}:${index}`} status="removed" member={member} />
+        ))}
+        {diff.changed.map((change, index) => (
+          <article className="member-diff member-diff--changed" key={`changed:${change.kind}:${change.name}:${index}`}>
+            <span className="member-diff__status">~</span>
+            <div>
+              <strong>{change.name}</strong>
+              <code className="member-diff__before">− {memberSignature(change.before)}</code>
+              <code className="member-diff__after">+ {memberSignature(change.after)}</code>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MemberDiffCard({ status, member }: { status: 'added' | 'removed'; member: SymbolMember }) {
+  return (
+    <article className={`member-diff member-diff--${status}`}>
+      <span className="member-diff__status">{status === 'added' ? '+' : '−'}</span>
+      <div>
+        <strong>{memberSignature(member)}</strong>
+        <small>{status === 'added' ? 'Добавлено' : 'Удалено'} · {member.kind}</small>
+      </div>
+    </article>
+  );
+}
+
+function memberSignature(member: SymbolMember): string {
+  return member.signature ?? member.name;
 }

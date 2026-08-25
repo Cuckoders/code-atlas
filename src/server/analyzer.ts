@@ -7,6 +7,7 @@ import type {
   ArchitectureDiffSummary,
   LanguageStat,
   NodeKind,
+  NodeStructureDiff,
   ProjectAnalysis,
   ProjectDiagnostic,
   SymbolMember,
@@ -408,8 +409,13 @@ function applyArchitectureDiff(current: ProjectAnalysis, base: ProjectAnalysis):
         : undefined;
     if (status === 'added' && node.kind !== 'project') nodesAdded += 1;
     if (status === 'modified' && node.kind !== 'project') nodesModified += 1;
-    const merged = status
-      ? { ...node, metadata: { ...node.metadata, diffStatus: status } }
+    const structureDiff = createStructureDiff(node.members ?? [], baseNode?.members ?? [], status);
+    const merged = status || structureDiff
+      ? {
+          ...node,
+          ...(structureDiff ? { structureDiff } : {}),
+          ...(status ? { metadata: { ...node.metadata, diffStatus: status } } : {}),
+        }
       : node;
     mergedNodes.push(merged);
     idByStableKey.set(key, merged.id);
@@ -424,6 +430,7 @@ function applyArchitectureDiff(current: ProjectAnalysis, base: ProjectAnalysis):
       id: removedId,
       subtitle: node.subtitle ? `${node.subtitle} · удалено` : 'Удалено в текущей версии',
       metadata: { ...node.metadata, diffStatus: 'removed' },
+      structureDiff: createStructureDiff([], node.members ?? [], 'removed'),
     });
     idByStableKey.set(key, removedId);
     if (node.kind !== 'project') nodesRemoved += 1;
@@ -466,6 +473,37 @@ function applyArchitectureDiff(current: ProjectAnalysis, base: ProjectAnalysis):
   };
   if (current.summary.git.comparison) current.summary.git.comparison.architecture = architecture;
   return { ...current, nodes: mergedNodes, edges: mergedEdges };
+}
+
+function createStructureDiff(
+  currentMembers: SymbolMember[],
+  baseMembers: SymbolMember[],
+  nodeStatus?: 'added' | 'modified' | 'removed',
+): NodeStructureDiff | undefined {
+  if (nodeStatus === 'added') {
+    return currentMembers.length ? { added: currentMembers, removed: [], changed: [] } : undefined;
+  }
+  if (nodeStatus === 'removed') {
+    return baseMembers.length ? { added: [], removed: baseMembers, changed: [] } : undefined;
+  }
+  const currentByKey = new Map(currentMembers.map((member) => [memberKey(member), member]));
+  const baseByKey = new Map(baseMembers.map((member) => [memberKey(member), member]));
+  const added = currentMembers.filter((member) => !baseByKey.has(memberKey(member)));
+  const removed = baseMembers.filter((member) => !currentByKey.has(memberKey(member)));
+  const changed = currentMembers.flatMap((member) => {
+    const before = baseByKey.get(memberKey(member));
+    if (!before || normalizedMemberSignature(before) === normalizedMemberSignature(member)) return [];
+    return [{ name: member.name, kind: member.kind, before, after: member }];
+  });
+  return added.length || removed.length || changed.length ? { added, removed, changed } : undefined;
+}
+
+function memberKey(member: SymbolMember): string {
+  return `${member.kind}:${member.name}`;
+}
+
+function normalizedMemberSignature(member: SymbolMember): string {
+  return (member.signature ?? member.name).replace(/\s+/g, ' ').trim();
 }
 
 function stableNodeKey(node: AtlasNode): string {
@@ -683,7 +721,7 @@ function parseTypeScript(fileName: string, content: string): ParsedSource {
         return [{
           name,
           kind: 'method',
-          signature: `${name}(${member.parameters.map((parameter) => parameter.name.getText(sourceFile)).join(', ')})`,
+          signature: `${name}(${member.parameters.map((parameter) => parameter.getText(sourceFile)).join(', ')})${member.type ? `: ${member.type.getText(sourceFile)}` : ''}`,
           line: lineOf(sourceFile, member),
         }];
       });
@@ -704,7 +742,12 @@ function parseTypeScript(fileName: string, content: string): ParsedSource {
         line: lineOf(sourceFile, statement),
         members: statement.members.flatMap((member): SymbolMember[] => {
           if (!member.name) return [];
-          return [{ name: member.name.getText(sourceFile), kind: 'property', line: lineOf(sourceFile, member) }];
+          return [{
+            name: member.name.getText(sourceFile),
+            kind: 'property',
+            signature: member.getText(sourceFile).replace(/;$/, ''),
+            line: lineOf(sourceFile, member),
+          }];
         }),
       });
     }
@@ -777,11 +820,11 @@ function parsePython(content: string): ParsedSource {
       for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
         const nextLine = lines[nextIndex];
         if (nextLine.trim() && nextLine.length - nextLine.trimStart().length <= classIndent) break;
-        const methodMatch = /^\s+def\s+([A-Za-z_]\w*)\s*\(([^)]*)/.exec(nextLine);
+        const methodMatch = /^\s+def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:->\s*([^:]+))?/.exec(nextLine);
         if (methodMatch) members.push({
           name: methodMatch[1],
           kind: 'method',
-          signature: `${methodMatch[1]}(${methodMatch[2]})`,
+          signature: `${methodMatch[1]}(${methodMatch[2]})${methodMatch[3] ? ` -> ${methodMatch[3].trim()}` : ''}`,
           line: nextIndex + 1,
         });
       }
