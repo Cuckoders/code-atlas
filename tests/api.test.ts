@@ -83,8 +83,8 @@ describe('API', () => {
     const warmJob = await waitForJob(app, warmResponse.json<AnalysisJob>().id);
     const warmSnapshot = await app.inject({ method: 'GET', url: `/api/snapshots/${warmJob.snapshotId}` });
     expect(warmSnapshot.json<StoredAnalysisSnapshot>().analysis.summary.incremental).toEqual({
-      eligibleFiles: 4,
-      reusedFiles: 4,
+      eligibleFiles: 7,
+      reusedFiles: 7,
       parsedFiles: 0,
     });
   });

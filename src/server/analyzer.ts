@@ -777,6 +777,7 @@ function detectTechnologies(manifestName: string, content: string): string[] {
     ['Fastify', /fastify/i], ['Express', /["']express["']/i],
     ['NestJS', /@nestjs\//i], ['Django', /django/i], ['FastAPI', /fastapi/i],
     ['Spring', /spring-boot/i], ['Rails', /rails/i], ['Flutter', /flutter/i],
+    ['Kotlin', /\bkotlin\s*\(|org\.jetbrains\.kotlin/i],
   ];
   for (const [name, pattern] of rules) if (pattern.test(content)) technologies.add(name);
   if (manifestName === 'go.mod') technologies.add('Go modules');
@@ -1053,7 +1054,10 @@ function resolveLocalImport(
   modules: Map<string, ModuleInfo>,
   services: ServiceInfo[],
 ): string | undefined {
-  const normalizedSpecifier = specifier.replace(/[;'"\s]+$/g, '').trim();
+  const normalizedSpecifier = specifier
+    .replace(/[;'"\s]+$/g, '')
+    .replace(/\s+as\s+[A-Za-z_]\w+$/i, '')
+    .trim();
   if (!normalizedSpecifier) return undefined;
 
   if (normalizedSpecifier.startsWith('.')) {

@@ -13,7 +13,7 @@ describe('SnapshotStore', () => {
     try {
       const firstStore = new SnapshotStore(databasePath);
       const analysis = await analyzeProject(fixturePath, { parseCache: firstStore });
-      expect(analysis.summary.incremental).toEqual({ eligibleFiles: 4, reusedFiles: 0, parsedFiles: 4 });
+      expect(analysis.summary.incremental).toEqual({ eligibleFiles: 7, reusedFiles: 0, parsedFiles: 7 });
       const summary = firstStore.save(analysis);
       firstStore.close();
 
@@ -24,7 +24,7 @@ describe('SnapshotStore', () => {
         analysis: expect.objectContaining({ summary: analysis.summary }),
       }));
       const warmAnalysis = await analyzeProject(fixturePath, { parseCache: reopenedStore });
-      expect(warmAnalysis.summary.incremental).toEqual({ eligibleFiles: 4, reusedFiles: 4, parsedFiles: 0 });
+      expect(warmAnalysis.summary.incremental).toEqual({ eligibleFiles: 7, reusedFiles: 7, parsedFiles: 0 });
       reopenedStore.close();
     } finally {
       await fs.rm(temporaryRoot, { recursive: true, force: true });

@@ -64,6 +64,20 @@ const cases = [
     symbol: 'OrderController',
     method: 'submit',
   },
+  {
+    language: 'Kotlin',
+    extension: '.kt',
+    source: `
+      package commerce.checkout
+      import commerce.inventory.InventoryService
+      interface CheckoutPort { fun submit(id: String): Boolean; }
+      class CheckoutController(private val inventory: InventoryService) : CheckoutPort {
+        override fun submit(id: String): Boolean { return inventory.reserve(id) };
+      }
+    `,
+    symbol: 'CheckoutController',
+    method: 'submit',
+  },
 ] as const;
 
 describe('Tree-sitter WASM adapters', () => {
@@ -137,6 +151,23 @@ describe('Tree-sitter WASM adapters', () => {
       `,
       expected: { sourceSymbol: 'OrderController', targetSymbol: 'OrderService', targetMember: 'save' },
     },
+    {
+      language: 'Kotlin',
+      extension: '.kt',
+      source: `
+        package demo
+        import demo.inventory.InventoryService as StockService
+        class CheckoutController(private val inventory: StockService) {
+          fun submit(id: String): Boolean { return inventory.reserve(id) };
+        }
+      `,
+      expected: {
+        sourceSymbol: 'CheckoutController',
+        targetSymbol: 'InventoryService',
+        targetMember: 'reserve',
+        importSpecifier: 'demo.inventory.InventoryService as StockService',
+      },
+    },
   ] as const;
 
   for (const testCase of callCases) {
@@ -147,4 +178,12 @@ describe('Tree-sitter WASM adapters', () => {
       ]));
     });
   }
+
+  it('parses Kotlin script files with the same verified grammar', async () => {
+    const result = await parseWithTreeSitter('.kts', 'fun configure() { println("ready") }');
+    expect(result?.symbols).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'configure', kind: 'function' }),
+    ]));
+    expect(result?.parser).toBe('Tree-sitter WASM · kotlin');
+  });
 });

@@ -1,7 +1,7 @@
 import type { NodeKind, SymbolMember } from '../shared/graph.js';
 import type { ParsedSource } from './tree-sitter-parser.js';
 
-export const PARSER_CACHE_VERSION = 2;
+export const PARSER_CACHE_VERSION = 3;
 export const MAX_PARSE_CACHE_JSON_SIZE = 2 * 1024 * 1024;
 
 export interface ParseCache {

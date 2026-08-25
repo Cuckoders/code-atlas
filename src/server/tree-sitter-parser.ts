@@ -1,4 +1,10 @@
+import { createHash } from 'node:crypto';
+import { promises as fs } from 'node:fs';
 import { createRequire } from 'node:module';
+import {
+  KOTLIN_GRAMMAR,
+  KOTLIN_GRAMMAR_WASM_SPECIFIER,
+} from '@binclusive/tree-sitter-kotlin-wasm';
 import { Language, Parser, type Node as SyntaxNode } from 'web-tree-sitter';
 import type { NodeKind, SymbolMember } from '../shared/graph.js';
 
@@ -25,6 +31,7 @@ export interface ParsedSource {
 interface GrammarConfig {
   name: string;
   wasm: string;
+  sha256?: string;
   declarationTypes: Set<string>;
   interfaceTypes: Set<string>;
   functionTypes: Set<string>;
@@ -38,6 +45,8 @@ const GRAMMARS: Record<string, GrammarConfig> = {
   '.rs': config('rust', ['struct_item', 'enum_item', 'union_item'], ['trait_item'], ['function_item'], ['function_item'], ['use_declaration']),
   '.cs': config('c-sharp', ['class_declaration', 'record_declaration', 'struct_declaration', 'enum_declaration'], ['interface_declaration'], ['global_statement'], ['method_declaration', 'constructor_declaration'], ['using_directive']),
   '.php': config('php', ['class_declaration', 'trait_declaration', 'enum_declaration'], ['interface_declaration'], ['function_definition'], ['method_declaration'], ['namespace_use_declaration']),
+  '.kt': config('kotlin', ['class_declaration', 'object_declaration'], [], ['function_declaration'], ['function_declaration', 'secondary_constructor'], ['import'], KOTLIN_GRAMMAR_WASM_SPECIFIER, KOTLIN_GRAMMAR.sha256),
+  '.kts': config('kotlin', ['class_declaration', 'object_declaration'], [], ['function_declaration'], ['function_declaration', 'secondary_constructor'], ['import'], KOTLIN_GRAMMAR_WASM_SPECIFIER, KOTLIN_GRAMMAR.sha256),
 };
 
 const require = createRequire(import.meta.url);
@@ -74,10 +83,13 @@ function config(
   functionTypes: string[],
   methodTypes: string[],
   importTypes: string[],
+  wasm = `@vscode/tree-sitter-wasm/wasm/tree-sitter-${name}.wasm`,
+  sha256?: string,
 ): GrammarConfig {
   return {
     name,
-    wasm: `@vscode/tree-sitter-wasm/wasm/tree-sitter-${name}.wasm`,
+    wasm,
+    ...(sha256 ? { sha256 } : {}),
     declarationTypes: new Set(declarationTypes),
     interfaceTypes: new Set(interfaceTypes),
     functionTypes: new Set(functionTypes),
@@ -94,10 +106,19 @@ function initializeParser(): Promise<void> {
 function loadLanguage(grammar: GrammarConfig): Promise<Language> {
   let language = languageCache.get(grammar.name);
   if (!language) {
-    language = Language.load(require.resolve(grammar.wasm));
+    language = loadVerifiedLanguage(grammar);
     languageCache.set(grammar.name, language);
   }
   return language;
+}
+
+async function loadVerifiedLanguage(grammar: GrammarConfig): Promise<Language> {
+  const wasmPath = require.resolve(grammar.wasm);
+  if (!grammar.sha256) return Language.load(wasmPath);
+  const bytes = await fs.readFile(wasmPath);
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  if (digest !== grammar.sha256) throw new Error(`Tree-sitter ${grammar.name} grammar digest mismatch`);
+  return Language.load(bytes);
 }
 
 function extractSource(root: SyntaxNode, grammar: GrammarConfig): ParsedSource {
@@ -119,7 +140,7 @@ function extractSource(root: SyntaxNode, grammar: GrammarConfig): ParsedSource {
         const members = collectMembers(typeNode, grammar);
         addSymbol(symbols, seen, {
           name,
-          kind: grammar.interfaceTypes.has(typeNode.type) || typeNode.childForFieldName('type')?.type === 'interface_type'
+          kind: isInterfaceNode(typeNode, grammar)
             ? 'interface'
             : /Controller$/.test(name) ? 'controller' : 'class',
           line: typeNode.startPosition.row + 1,
@@ -168,6 +189,7 @@ const CALL_NODE_TYPES: Record<string, Set<string>> = {
   rust: new Set(['call_expression']),
   'c-sharp': new Set(['invocation_expression', 'object_creation_expression']),
   php: new Set(['function_call_expression', 'member_call_expression', 'scoped_call_expression', 'object_creation_expression']),
+  kotlin: new Set(['call_expression']),
 };
 
 function collectCalls(
@@ -283,7 +305,11 @@ function resolveCall(
 
   if (callable.type === 'identifier' || /(?:name|identifier)$/.test(callable.type) && !/[.:\\]/.test(callable.text)) {
     const target = identifier(callable.text);
-    return target ? resolveBareCall(target, importBindings) : null;
+    if (!target) return null;
+    const resolved = resolveBareCall(target, importBindings);
+    return language === 'kotlin' && /^[A-Z]/.test(target)
+      ? { ...resolved, targetMember: 'constructor' }
+      : resolved;
   }
 
   if (language === 'rust' && callable.type === 'scoped_identifier') {
@@ -309,7 +335,10 @@ function resolveCall(
 
 function resolveBareCall(targetSymbol: string, importBindings: Map<string, string>): ResolvedCall {
   const importSpecifier = importBindings.get(targetSymbol);
-  return { targetSymbol, ...(importSpecifier ? { importSpecifier } : {}) };
+  return {
+    targetSymbol: importedTargetSymbol(targetSymbol, importSpecifier),
+    ...(importSpecifier ? { importSpecifier } : {}),
+  };
 }
 
 function resolveQualifiedCall(
@@ -325,14 +354,21 @@ function resolveQualifiedCall(
   if (language === 'go' && importedPackage) {
     return { targetSymbol: targetMember, importSpecifier: importedPackage };
   }
-  const targetSymbol = variableTypes.get(qualifier) ?? simpleTypeName(rawQualifier);
-  if (!targetSymbol) return null;
-  const importSpecifier = importBindings.get(targetSymbol);
+  const inferredTarget = variableTypes.get(qualifier) ?? simpleTypeName(rawQualifier);
+  if (!inferredTarget) return null;
+  const importSpecifier = importBindings.get(inferredTarget);
+  const targetSymbol = importedTargetSymbol(inferredTarget, importSpecifier);
   return {
     targetSymbol,
     targetMember,
     ...(importSpecifier ? { importSpecifier } : {}),
   };
+}
+
+function importedTargetSymbol(targetSymbol: string, importSpecifier: string | undefined): string {
+  if (!importSpecifier || !new RegExp(`\\bas\\s+${targetSymbol}$`, 'i').test(importSpecifier)) return targetSymbol;
+  const original = importSpecifier.replace(/\s+as\s+[A-Za-z_]\w+$/i, '');
+  return identifier(original.split(/(?:\.|::|\\|\/)/).at(-1)) ?? targetSymbol;
 }
 
 function qualifierIdentifier(value: string): string | undefined {
@@ -344,8 +380,9 @@ function qualifierIdentifier(value: string): string | undefined {
 function createImportBindings(content: string, imports: string[], language: string): Map<string, string> {
   const bindings = new Map<string, string>();
   for (const specifier of imports) {
+    const alias = identifier(/\s+as\s+([A-Za-z_]\w+)$/i.exec(specifier)?.[1]);
     const normalized = specifier.replace(/\s+as\s+\w+$/i, '').replace(/\.\*$/, '');
-    const name = identifier(normalized.split(/(?:\.|::|\\|\/)/).at(-1));
+    const name = alias ?? identifier(normalized.split(/(?:\.|::|\\|\/)/).at(-1));
     if (name && name !== '*') bindings.set(name, specifier);
   }
   if (language === 'go') {
@@ -399,6 +436,9 @@ function collectVariableTypes(content: string, language: string): Map<string, st
   } else if (language === 'php') {
     for (const match of content.matchAll(/\$([A-Za-z_]\w*)\s*=\s*new\s+([A-Za-z_\\][A-Za-z0-9_\\]*)/gi)) add(match[1], match[2]);
     for (const match of content.matchAll(/([A-Za-z_\\][A-Za-z0-9_\\]*)\s+\$([A-Za-z_]\w*)/g)) add(match[2], match[1]);
+  } else if (language === 'kotlin') {
+    for (const match of content.matchAll(/\b(?:val|var)\s+([A-Za-z_]\w*)\s*:\s*([A-Za-z_][A-Za-z0-9_.<>?]*)/g)) add(match[1], match[2]);
+    for (const match of content.matchAll(/\b(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*([A-Z][A-Za-z0-9_.]*)\s*\(/g)) add(match[1], match[2]);
   }
   return variables;
 }
@@ -427,8 +467,16 @@ function extractNamespace(content: string, language: string): string | undefined
         ? /^\s*namespace\s+([\w\\]+)\s*;/m
         : language === 'go'
           ? /^\s*package\s+([A-Za-z_]\w*)/m
-          : null;
+          : language === 'kotlin'
+            ? /^\s*package\s+([\w.]+)/m
+            : null;
   return pattern?.exec(content)?.[1];
+}
+
+function isInterfaceNode(node: SyntaxNode, grammar: GrammarConfig): boolean {
+  return grammar.interfaceTypes.has(node.type)
+    || node.childForFieldName('type')?.type === 'interface_type'
+    || grammar.name === 'kotlin' && /\binterface\s+[A-Za-z_]\w*/.test(node.text.slice(0, 500));
 }
 
 function normalizeGoTypeNode(node: SyntaxNode, grammar: GrammarConfig): SyntaxNode {
