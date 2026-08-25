@@ -75,6 +75,8 @@ export function traceProjectRequest(
   probe: RequestProbeResult,
 ): RequestTrace {
   const requestPath = requestPathname(input.url);
+  const blueprintRuntimeTrace = traceBlueprintRuntimeResponse(analysis, probe);
+  if (blueprintRuntimeTrace) return blueprintRuntimeTrace;
   const route = requestPath ? findRoute(analysis.nodes, input.method, requestPath) : undefined;
   if (!route) {
     return {
@@ -139,6 +141,114 @@ export function traceProjectRequest(
     edgeIds: [...edgeIds],
     probableFailure,
   };
+}
+
+interface BlueprintRuntimeResponseStep {
+  nodeLabel: string;
+  nodeKind?: string;
+  status: 'success' | 'failed';
+  durationMs?: number;
+  error?: string;
+}
+
+function traceBlueprintRuntimeResponse(analysis: ProjectAnalysis, probe: RequestProbeResult): RequestTrace | undefined {
+  if (!probe.responseBody.trim()) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(probe.responseBody);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.steps) || (parsed.status !== 'completed' && parsed.status !== 'failed')) return undefined;
+  const runtimeSteps = parsed.steps.flatMap((value): BlueprintRuntimeResponseStep[] => {
+    if (!isRecord(value) || typeof value.nodeLabel !== 'string' || (value.status !== 'success' && value.status !== 'failed')) return [];
+    return [{
+      nodeLabel: value.nodeLabel,
+      status: value.status,
+      ...(typeof value.nodeKind === 'string' ? { nodeKind: value.nodeKind } : {}),
+      ...(typeof value.durationMs === 'number' ? { durationMs: value.durationMs } : {}),
+      ...(typeof value.error === 'string' ? { error: value.error } : {}),
+    }];
+  });
+  if (!runtimeSteps.length) return undefined;
+
+  const nodeById = new Map(analysis.nodes.map((node) => [node.id, node]));
+  const steps: RequestTraceStep[] = [];
+  const seenNodeIds = new Set<string>();
+  const edgeIds = new Set<string>();
+  let lastMappedNode: AtlasNode | undefined;
+  let failureNode: AtlasNode | undefined;
+  let failedRuntimeStep: BlueprintRuntimeResponseStep | undefined;
+
+  for (const runtimeStep of runtimeSteps) {
+    const mapped = matchBlueprintRuntimeNode(analysis.nodes, runtimeStep);
+    if (mapped) {
+      for (const ancestor of buildAncestorChain(mapped.id, analysis.edges, nodeById)) {
+        if (ancestor.node.kind === 'project') continue;
+        addStep(steps, seenNodeIds, edgeIds, ancestor.node, roleForNode(ancestor.node), ancestor.edge?.id, 'Контекст Blueprint runtime');
+      }
+      const incoming = analysis.edges.find((edge) => edge.kind === 'contains' && edge.target === mapped.id);
+      addStep(
+        steps,
+        seenNodeIds,
+        edgeIds,
+        mapped,
+        roleForNode(mapped),
+        incoming?.id,
+        `${runtimeStep.nodeLabel} · ${Math.max(0, runtimeStep.durationMs ?? 0)} мс`,
+      );
+      lastMappedNode = mapped;
+    }
+    if (runtimeStep.status === 'failed' && !failedRuntimeStep) {
+      failedRuntimeStep = runtimeStep;
+      failureNode = mapped ?? lastMappedNode;
+    }
+  }
+
+  const probableFailure = failedRuntimeStep || (probe.status ?? 0) >= 500 ? {
+    ...(failureNode ? { nodeId: failureNode.id } : {}),
+    confidence: failureNode ? 'high' as const : 'medium' as const,
+    title: failedRuntimeStep?.error || `Blueprint runtime: HTTP ${probe.status ?? 500}`,
+    reason: failureNode
+      ? `Runtime зафиксировал падение на шаге «${failedRuntimeStep?.nodeLabel ?? failureNode.label}»; на карте выделен связанный код «${failureNode.label}».`
+      : `Runtime зафиксировал падение на шаге «${failedRuntimeStep?.nodeLabel ?? 'неизвестный компонент'}», но связанный код отсутствует в текущем снимке.`,
+    evidence: compactEvidence([
+      `${probe.method} ${requestPathname(probe.url) ?? probe.url}`,
+      `${probe.status ?? 500} ${probe.statusText ?? ''}`.trim(),
+      failedRuntimeStep ? `Шаг: ${failedRuntimeStep.nodeLabel}` : '',
+    ]),
+  } : undefined;
+
+  return {
+    steps,
+    nodeIds: [...seenNodeIds],
+    edgeIds: [...edgeIds],
+    ...(probableFailure ? { probableFailure } : {}),
+  };
+}
+
+function matchBlueprintRuntimeNode(nodes: AtlasNode[], step: BlueprintRuntimeResponseStep): AtlasNode | undefined {
+  const runtimeName = normalizeRuntimeName(step.nodeLabel);
+  let best: { node: AtlasNode; score: number } | undefined;
+  for (const node of nodes) {
+    if (node.kind === 'project') continue;
+    const nodeName = normalizeRuntimeName(node.label);
+    const fileName = normalizeRuntimeName(node.path?.split(/[\\/]/).at(-1)?.replace(/\.[^.]+$/, '') ?? '');
+    let score = 0;
+    if (nodeName === runtimeName) score += 100;
+    else if (nodeName.includes(runtimeName) || runtimeName.includes(nodeName)) score += 62;
+    if (fileName === runtimeName) score += 80;
+    else if (fileName.includes(runtimeName) || runtimeName.includes(fileName)) score += 55;
+    if (node.kind !== 'module' && node.kind !== 'service') score += 8;
+    if (step.nodeKind === 'controller' && (node.kind === 'controller' || node.kind === 'function')) score += 12;
+    if (step.nodeKind === 'service' && (node.kind === 'class' || node.kind === 'controller')) score += 10;
+    if (score > (best?.score ?? 0)) best = { node, score };
+  }
+  return best && best.score >= 62 ? best.node : undefined;
+}
+
+function normalizeRuntimeName(value: string): string {
+  return value.toLowerCase().replace(/[^a-zа-я0-9]/gi, '');
 }
 
 function findRoute(nodes: AtlasNode[], method: RequestProbeMethod, pathname: string): RouteCandidate | undefined {
@@ -463,4 +573,8 @@ function findResponseHintStep(
 
 function compactEvidence(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, 4);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

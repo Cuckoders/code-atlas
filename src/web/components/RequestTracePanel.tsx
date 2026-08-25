@@ -191,6 +191,8 @@ export function RequestTracePanel({
               <span>match</span>
               <strong>{trace.matchedRoute.method} {trace.matchedRoute.pattern}</strong>
             </div>
+          ) : trace.steps.length ? (
+            <div className="request-trace-route"><span>runtime</span><strong>Путь получен из Blueprint-проекта</strong></div>
           ) : <p className="request-trace-empty">Endpoint не найден среди routes текущего снимка.</p>}
           {trace.steps.length ? (
             <ol className="request-trace-steps">

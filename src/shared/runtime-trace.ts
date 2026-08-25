@@ -48,6 +48,8 @@ export interface RuntimeTraceSession {
 export interface MappedRuntimeSpan extends RuntimeSpan {
   nodeId?: string;
   matchReason?: string;
+  pathNodeIds?: string[];
+  pathEdgeIds?: string[];
 }
 
 export interface MappedRuntimeTrace {
@@ -60,11 +62,16 @@ export function mapRuntimeTrace(analysis: ProjectAnalysis, session: RuntimeTrace
   const spans = session.spans
     .slice()
     .sort(compareSpans)
-    .map((span) => ({ ...span, ...matchSpan(analysis.nodes, span) }));
+    .map((span) => ({ ...span, ...matchSpan(analysis.nodes, span) }))
+    .map((span): MappedRuntimeSpan => {
+      if (!span.nodeId) return span;
+      const path = hierarchyPath(analysis, span.nodeId);
+      return { ...span, pathNodeIds: path.nodeIds, pathEdgeIds: path.edgeIds };
+    });
   const uniqueSpans = spans.filter((span, index) => (
     Boolean(span.nodeId) && spans.findIndex((item) => item.nodeId === span.nodeId) === index
   ));
-  const edgeIds: string[] = [];
+  const edgeIds = [...new Set(uniqueSpans.flatMap((span) => span.pathEdgeIds ?? []))];
   for (let index = 1; index < uniqueSpans.length; index += 1) {
     const source = uniqueSpans[index - 1].nodeId;
     const target = uniqueSpans[index].nodeId;
@@ -73,18 +80,20 @@ export function mapRuntimeTrace(analysis: ProjectAnalysis, session: RuntimeTrace
     if (edge && !edgeIds.includes(edge.id)) edgeIds.push(edge.id);
   }
 
-  const steps = uniqueSpans.flatMap((span) => {
-    const node = analysis.nodes.find((item) => item.id === span.nodeId);
-    if (!node || !span.nodeId) return [];
-    const incomingEdge = edgeIds.find((edgeId) => analysis.edges.find((edge) => (
-      edge.id === edgeId && edge.target === node.id
-    )));
+  const tracedNodeIds = [...new Set(uniqueSpans.flatMap((span) => span.pathNodeIds ?? (span.nodeId ? [span.nodeId] : [])))];
+  const steps = tracedNodeIds.flatMap((nodeId) => {
+    const node = analysis.nodes.find((item) => item.id === nodeId);
+    if (!node) return [];
+    const sourceSpan = uniqueSpans.find((span) => span.pathNodeIds?.includes(nodeId) || span.nodeId === nodeId);
+    const incomingEdge = edgeIds.find((edgeId) => analysis.edges.find((edge) => edge.id === edgeId && edge.target === node.id));
     return [{
-      nodeId: span.nodeId,
+      nodeId,
       ...(incomingEdge ? { edgeId: incomingEdge } : {}),
       role: roleForNode(node.kind),
       label: node.label,
-      detail: `${span.serviceName} · ${formatDuration(span.durationMs)} · ${span.matchReason ?? 'runtime span'}`,
+      detail: sourceSpan
+        ? `${sourceSpan.serviceName} · ${formatDuration(sourceSpan.durationMs)} · ${sourceSpan.matchReason ?? 'runtime span'}`
+        : 'Контекст runtime span',
     }];
   });
   const failureSpan = spans.find((span) => span.status === 'error' || span.events.some((event) => event.name === 'exception'));
@@ -121,6 +130,24 @@ export function mapRuntimeTrace(analysis: ProjectAnalysis, session: RuntimeTrace
     } : {}),
   };
   return { session, spans, trace };
+}
+
+function hierarchyPath(analysis: ProjectAnalysis, nodeId: string): { nodeIds: string[]; edgeIds: string[] } {
+  const nodeIds = [nodeId];
+  const edgeIds: string[] = [];
+  const visited = new Set(nodeIds);
+  let current = nodeId;
+  while (true) {
+    const edge = analysis.edges.find((item) => item.kind === 'contains' && item.target === current && !visited.has(item.source));
+    if (!edge) break;
+    const parent = analysis.nodes.find((node) => node.id === edge.source);
+    if (!parent) break;
+    if (parent.kind !== 'project') nodeIds.unshift(parent.id);
+    edgeIds.unshift(edge.id);
+    visited.add(parent.id);
+    current = parent.id;
+  }
+  return { nodeIds, edgeIds };
 }
 
 function matchSpan(nodes: AtlasNode[], span: RuntimeSpan): Pick<MappedRuntimeSpan, 'nodeId' | 'matchReason'> {

@@ -99,6 +99,48 @@ describe('request trace inference', () => {
     expect(trace.steps).toEqual([]);
     expect(trace.probableFailure).toEqual(expect.objectContaining({ title: 'Маршрут не найден', confidence: 'high' }));
   });
+
+  it('maps embedded Blueprint runtime steps to generated files and highlights the failure', () => {
+    const blueprintAnalysis: ProjectAnalysis = {
+      ...analysis,
+      nodes: [
+        { id: 'project', label: 'generated', kind: 'project' },
+        { id: 'service', label: 'blueprint', kind: 'service', path: 'blueprint' },
+        { id: 'web-module', label: 'web-mobile.ts', kind: 'module', path: 'blueprint/web-mobile.ts' },
+        { id: 'web-class', label: 'WebMobile', kind: 'class', path: 'blueprint/web-mobile.ts' },
+        { id: 'order-module', label: 'order-service.ts', kind: 'module', path: 'blueprint/order-service.ts' },
+        { id: 'order-class', label: 'OrderService', kind: 'class', path: 'blueprint/order-service.ts' },
+      ],
+      edges: [
+        { id: 'project-service', source: 'project', target: 'service', kind: 'contains' },
+        { id: 'service-web', source: 'service', target: 'web-module', kind: 'contains' },
+        { id: 'web-class-edge', source: 'web-module', target: 'web-class', kind: 'contains' },
+        { id: 'service-order', source: 'service', target: 'order-module', kind: 'contains' },
+        { id: 'order-class-edge', source: 'order-module', target: 'order-class', kind: 'contains' },
+      ],
+      diagnostics: [],
+    };
+    const request = probeInput('POST', 'http://127.0.0.1:3000/orders');
+    const response = probeResult(request, 500);
+    response.responseBody = JSON.stringify({
+      status: 'failed',
+      steps: [
+        { nodeLabel: 'Web / Mobile', nodeKind: 'frontend', status: 'success', durationMs: 2 },
+        { nodeLabel: 'Order Service', nodeKind: 'service', status: 'success', durationMs: 5 },
+        { nodeLabel: 'Orders DB', nodeKind: 'database', status: 'failed', durationMs: 12, error: 'Database unavailable' },
+      ],
+    });
+
+    const trace = traceProjectRequest(blueprintAnalysis, request, response);
+
+    expect(trace.nodeIds).toEqual(expect.arrayContaining(['service', 'web-module', 'web-class', 'order-module', 'order-class']));
+    expect(trace.edgeIds).toEqual(expect.arrayContaining(['service-web', 'web-class-edge', 'service-order', 'order-class-edge']));
+    expect(trace.probableFailure).toEqual(expect.objectContaining({
+      nodeId: 'order-class',
+      confidence: 'high',
+      title: 'Database unavailable',
+    }));
+  });
 });
 
 function probeInput(method: RequestProbeInput['method'], url: string): RequestProbeInput {

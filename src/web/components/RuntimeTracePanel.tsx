@@ -75,6 +75,8 @@ export default function RuntimeTracePanel({
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
+    setSelected(null);
+    setSessionsCollapsed(false);
     setLoading(true);
     setError(null);
     void Promise.all([
@@ -133,6 +135,12 @@ export default function RuntimeTracePanel({
       setLoading(false);
     }
   }, [loadTraces, openTrace, projectPath]);
+
+  useEffect(() => {
+    const latest = traces[0];
+    if (!open || loading || selected || !latest) return;
+    void openTrace(latest.id);
+  }, [loading, open, openTrace, selected, traces]);
 
   useEffect(() => {
     if (!selected) return;

@@ -10,17 +10,19 @@ export interface TracePlaybackOptions {
 
 export function traceAtRuntimeSpan(mapped: MappedRuntimeTrace, playhead: number): RequestTrace {
   const safePlayhead = Math.max(0, Math.min(mapped.spans.length - 1, playhead));
-  const reachedNodeIds: string[] = [];
-  for (const span of mapped.spans.slice(0, safePlayhead + 1)) {
-    if (span.nodeId && !reachedNodeIds.includes(span.nodeId)) reachedNodeIds.push(span.nodeId);
-  }
+  const reachedSpans = mapped.spans.slice(0, safePlayhead + 1);
+  const reachedNodeIds = [...new Set(reachedSpans.flatMap((span) => span.pathNodeIds ?? (span.nodeId ? [span.nodeId] : [])))];
+  const pathEdgeIds = [...new Set(reachedSpans.flatMap((span) => span.pathEdgeIds ?? []))];
+  const reachedEdgeIds = pathEdgeIds.length
+    ? pathEdgeIds
+    : mapped.trace.edgeIds.slice(0, Math.max(0, reachedNodeIds.length - 1));
   const reachedNodes = new Set(reachedNodeIds);
   const failureIndex = runtimeFailureIndex(mapped);
   return {
     ...(mapped.trace.matchedRoute ? { matchedRoute: mapped.trace.matchedRoute } : {}),
     steps: mapped.trace.steps.filter((step) => reachedNodes.has(step.nodeId)),
     nodeIds: reachedNodeIds,
-    edgeIds: mapped.trace.edgeIds.slice(0, Math.max(0, reachedNodeIds.length - 1)),
+    edgeIds: reachedEdgeIds,
     ...(mapped.trace.probableFailure && failureIndex >= 0 && safePlayhead >= failureIndex
       ? { probableFailure: mapped.trace.probableFailure }
       : {}),

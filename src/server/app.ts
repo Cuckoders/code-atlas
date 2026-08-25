@@ -405,7 +405,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     schema: { body: blueprintProjectInspectionSchema },
   }, async (request, reply) => {
     try {
-      return await blueprintRuntime.start(request.body.projectPath);
+      const address = app.server.address();
+      const collector = address && typeof address !== 'string' ? {
+        endpoint: `http://127.0.0.1:${address.port}/v1/traces?projectPath=${encodeURIComponent(request.body.projectPath)}`,
+        token: collectorToken,
+      } : undefined;
+      return await blueprintRuntime.start(request.body.projectPath, collector);
     } catch (error) {
       if (error instanceof BlueprintRuntimeError) return reply.status(error.statusCode).send({ error: error.message });
       throw error;

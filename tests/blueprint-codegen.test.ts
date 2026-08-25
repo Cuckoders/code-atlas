@@ -136,6 +136,17 @@ describe('blueprint code generation', () => {
       expect(result.ok).toBe(true);
       expect(result.steps).toHaveLength(2);
       expect(result.output).toEqual({ orderId: 'demo-1', accepted: true });
+
+      const failedResponse = await fetch(`${status.origin}/orders`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      const failedResult = await failedResponse.json() as { ok: boolean; status: string; steps: Array<{ status: string; error?: string }> };
+      expect(failedResponse.status).toBe(500);
+      expect(failedResult.ok).toBe(false);
+      expect(failedResult.status).toBe('failed');
+      expect(failedResult.steps[0]).toEqual(expect.objectContaining({ status: 'failed', error: expect.stringContaining('Missing required fields') }));
       await expect(manager.stop(projectPath)).resolves.toMatchObject({ status: 'stopped' });
     } finally {
       await manager.close();

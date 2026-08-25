@@ -44,6 +44,8 @@ describe('Runtime Trace', () => {
     const mapped = mapRuntimeTrace(analysis, session);
 
     expect(mapped.trace.nodeIds.length).toBeGreaterThanOrEqual(3);
+    expect(mapped.trace.edgeIds.length).toBeGreaterThan(0);
+    expect(mapped.spans.some((span) => (span.pathNodeIds?.length ?? 0) > 1 && (span.pathEdgeIds?.length ?? 0) > 0)).toBe(true);
     expect(mapped.trace.matchedRoute).toEqual(expect.objectContaining({ method: 'GET', pattern: '/products' }));
     expect(mapped.trace.probableFailure).toEqual(expect.objectContaining({
       confidence: 'high',
