@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::{fs, path::Path, sync::Mutex};
 
 use serde::Serialize;
 use tauri::{Manager, RunEvent};
@@ -23,12 +23,43 @@ fn backend_connection(state: tauri::State<'_, BackendState>) -> BackendConnectio
     state.connection.clone()
 }
 
+const MAX_BLUEPRINT_FILE_SIZE: usize = 300 * 1024;
+
+#[tauri::command]
+fn write_blueprint_file(path: String, contents: String) -> Result<(), String> {
+    validate_blueprint_file_path(&path)?;
+    if contents.len() > MAX_BLUEPRINT_FILE_SIZE {
+        return Err("Blueprint file is too large".to_string());
+    }
+    fs::write(path, contents).map_err(|error| format!("Failed to save Blueprint: {error}"))
+}
+
+#[tauri::command]
+fn read_blueprint_file(path: String) -> Result<String, String> {
+    validate_blueprint_file_path(&path)?;
+    let metadata = fs::metadata(&path).map_err(|error| format!("Failed to inspect Blueprint: {error}"))?;
+    if metadata.len() > MAX_BLUEPRINT_FILE_SIZE as u64 {
+        return Err("Blueprint file is too large".to_string());
+    }
+    fs::read_to_string(path).map_err(|error| format!("Failed to open Blueprint: {error}"))
+}
+
+fn validate_blueprint_file_path(path: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    let is_json = path.extension().and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"));
+    if !path.is_absolute() || !is_json {
+        return Err("Blueprint path must be an absolute JSON file path".to_string());
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![backend_connection])
+        .invoke_handler(tauri::generate_handler![backend_connection, write_blueprint_file, read_blueprint_file])
         .setup(setup_backend)
         .build(tauri::generate_context!())
         .expect("error while building Code Atlas");
@@ -64,7 +95,7 @@ fn setup_backend(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
 
 #[cfg(not(debug_assertions))]
 fn setup_release_backend(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    use std::{fs, net::TcpListener};
+    use std::net::TcpListener;
 
     use tauri::path::BaseDirectory;
     use tauri_plugin_shell::ShellExt;

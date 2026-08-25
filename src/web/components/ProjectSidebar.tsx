@@ -1,30 +1,17 @@
 import { useState, type FormEvent } from 'react';
-import type { AnalysisSnapshotSummary, ProjectSummary } from '../../shared/graph';
+import type { ProjectSummary } from '../../shared/graph';
 import type { ArchitectureBlueprintDraft } from '../../shared/blueprint';
 
 interface ProjectSidebarProps {
   summary: ProjectSummary;
   onCompare: (reference: string) => void;
-  snapshots: AnalysisSnapshotSummary[];
-  activeSnapshotId: string | null;
-  onOpenSnapshot: (snapshotId: string) => void;
   loading: boolean;
   blueprint?: { id: string | null; name: string; document: ArchitectureBlueprintDraft } | null;
 }
 
-const SNAPSHOT_DATE = new Intl.DateTimeFormat('ru', {
-  day: '2-digit',
-  month: 'short',
-  hour: '2-digit',
-  minute: '2-digit',
-});
-
 export function ProjectSidebar({
   summary,
   onCompare,
-  snapshots,
-  activeSnapshotId,
-  onOpenSnapshot,
   loading,
   blueprint,
 }: ProjectSidebarProps) {
@@ -59,27 +46,6 @@ export function ProjectSidebar({
             <article><strong>{summary.filesScanned}</strong><span>файлов</span></article>
           </>
         )}
-      </section>
-
-      <section className="sidebar-section snapshot-section">
-        <div className="section-heading"><h2>Снимки анализа</h2><span>{snapshots.length}</span></div>
-        {snapshots.length ? (
-          <div className="snapshot-list">
-            {snapshots.slice(0, 5).map((snapshot) => (
-              <button
-                type="button"
-                className={snapshot.id === activeSnapshotId ? 'is-active' : ''}
-                disabled={loading || snapshot.id === activeSnapshotId}
-                key={snapshot.id}
-                onClick={() => onOpenSnapshot(snapshot.id)}
-                title={snapshot.projectPath}
-              >
-                <span><strong>{snapshot.projectName}</strong><small>{SNAPSHOT_DATE.format(new Date(snapshot.createdAt))}</small></span>
-                <i>{snapshot.compareRef ? `Δ ${snapshot.compareRef}` : `${snapshot.nodeCount} уз.`}</i>
-              </button>
-            ))}
-          </div>
-        ) : <p className="diagnostic-empty">У этого проекта пока нет снимков анализа</p>}
       </section>
 
       {!blueprint ? (
@@ -155,7 +121,7 @@ export function ProjectSidebar({
       ) : (
         <section className="sidebar-section blueprint-sidebar-note">
           <h2>Отдельный документ</h2>
-          <p>Это сохранённая целевая архитектура, а не карта случайно выбранной папки. Снимки выше относятся только к анализу кода этого проекта.</p>
+          <p>Это сохранённая целевая архитектура, а не карта случайно выбранной папки. История анализа кода открывается отдельной кнопкой «Снимки» над картой.</p>
         </section>
       )}
     </aside>

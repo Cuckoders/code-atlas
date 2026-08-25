@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { BLUEPRINT_FILE_EXTENSION, MAX_BLUEPRINT_FILE_SIZE } from '../shared/blueprint-file';
 
 interface BackendConnection {
   origin: string;
@@ -26,6 +27,83 @@ export async function chooseProjectDirectory(): Promise<string | null> {
   });
 
   return typeof selection === 'string' ? selection : null;
+}
+
+export async function saveBlueprintFile(defaultName: string, contents: string): Promise<boolean> {
+  if (isTauri()) {
+    const { save } = await import('@tauri-apps/plugin-dialog');
+    const selectedPath = await save({
+      title: 'Сохранить Blueprint',
+      defaultPath: defaultName,
+      filters: [{ name: 'Code Atlas Blueprint', extensions: ['json'] }],
+    });
+    if (!selectedPath) return false;
+    await invoke('write_blueprint_file', { path: selectedPath, contents });
+    return true;
+  }
+
+  const pickerWindow = window as Window & {
+    showSaveFilePicker?: (options: unknown) => Promise<{ createWritable: () => Promise<{ write: (value: string) => Promise<void>; close: () => Promise<void> }> }>;
+  };
+  if (pickerWindow.showSaveFilePicker) {
+    try {
+      const handle = await pickerWindow.showSaveFilePicker({
+        suggestedName: defaultName,
+        types: [{ description: 'Code Atlas Blueprint', accept: { 'application/json': ['.json'] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(contents);
+      await writable.close();
+      return true;
+    } catch (pickerError) {
+      if (pickerError instanceof DOMException && pickerError.name === 'AbortError') return false;
+      throw pickerError;
+    }
+  }
+
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([contents], { type: 'application/json' }));
+  link.download = defaultName;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 0);
+  return true;
+}
+
+export async function chooseBlueprintFile(): Promise<{ name: string; contents: string } | null> {
+  if (isTauri()) {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const selectedPath = await open({
+      title: 'Открыть Blueprint',
+      directory: false,
+      multiple: false,
+      filters: [{ name: 'Code Atlas Blueprint', extensions: ['json'] }],
+    });
+    if (typeof selectedPath !== 'string') return null;
+    return {
+      name: selectedPath.split(/[\\/]/).at(-1) ?? `blueprint${BLUEPRINT_FILE_EXTENSION}`,
+      contents: await invoke<string>('read_blueprint_file', { path: selectedPath }),
+    };
+  }
+
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,.code-atlas-blueprint.json,application/json';
+    input.oncancel = () => resolve(null);
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) {
+        resolve(null);
+        return;
+      }
+      if (file.size > MAX_BLUEPRINT_FILE_SIZE) {
+        reject(new Error('Файл Blueprint слишком большой.'));
+        return;
+      }
+      file.text().then((contents) => resolve({ name: file.name, contents }), reject);
+    };
+    input.click();
+  });
 }
 
 export async function apiFetch(apiPath: string, init?: RequestInit): Promise<Response> {

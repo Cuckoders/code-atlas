@@ -266,6 +266,10 @@ describe('API', () => {
       workerThreadId: expect.any(Number),
     });
 
+    const deleteResponse = await app.inject({ method: 'DELETE', url: `/api/snapshots/${completed.snapshotId}` });
+    expect(deleteResponse.statusCode).toBe(204);
+    expect((await app.inject({ method: 'GET', url: `/api/snapshots/${completed.snapshotId}` })).statusCode).toBe(404);
+
     const warmResponse = await app.inject({
       method: 'POST',
       url: '/api/analysis-jobs',
@@ -278,6 +282,7 @@ describe('API', () => {
       reusedFiles: 7,
       parsedFiles: 0,
     });
+
   });
 
   it('validates job identifiers before looking them up', async () => {

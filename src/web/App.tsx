@@ -28,6 +28,7 @@ import type {
   StoredAnalysisSnapshot,
 } from '../shared/graph';
 import type { ArchitectureBlueprintDraft } from '../shared/blueprint';
+import { parseBlueprintFile } from '../shared/blueprint-file';
 import type { RequestTrace } from '../shared/request-trace';
 import type { SourceEditor } from '../shared/source-editor';
 import { AtlasGraphNode, type AtlasGraphNodeData } from './components/AtlasGraphNode';
@@ -38,7 +39,7 @@ import { MapFilters } from './components/MapFilters';
 import { ProjectSidebar } from './components/ProjectSidebar';
 import { RequestTraceEdge, type RequestTraceEdgeData } from './components/RequestTraceEdge';
 import { RequestTracePanel } from './components/RequestTracePanel';
-import { apiFetch, chooseProjectDirectory, hasNativeDirectoryPicker } from './desktop';
+import { apiFetch, chooseBlueprintFile, chooseProjectDirectory, hasNativeDirectoryPicker } from './desktop';
 import { layoutAtlasGraph, type GraphLayoutMode } from './graph-layout';
 import { openNodeInEditor, sourceLocationForNode } from './source-editor';
 import type { TracePlaybackOptions } from './trace-playback';
@@ -48,6 +49,7 @@ const edgeTypes = { requestTrace: RequestTraceEdge };
 const Graph3D = lazy(() => import('./components/Graph3D'));
 const ArchitectureConstructor = lazy(() => import('./components/ArchitectureConstructor'));
 const BlueprintMapView = lazy(() => import('./components/BlueprintMapView'));
+const SnapshotLibrary = lazy(() => import('./components/SnapshotLibrary'));
 const RuntimeTracePanel = lazy(() => import('./components/RuntimeTracePanel'));
 const ALL_KINDS: NodeKind[] = ['project', 'service', 'database', 'module', 'controller', 'class', 'interface', 'function'];
 const SIDEBAR_STORAGE_KEY = 'code-atlas:ui:sidebar:v1';
@@ -87,6 +89,8 @@ export function App() {
   const [analysisPriority, setAnalysisPriority] = useState<AnalysisJobPriority>('normal');
   const [snapshots, setSnapshots] = useState<AnalysisSnapshotSummary[]>([]);
   const [activeSnapshotId, setActiveSnapshotId] = useState<string | null>(null);
+  const [snapshotLibraryOpen, setSnapshotLibraryOpen] = useState(false);
+  const [snapshotBusyId, setSnapshotBusyId] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rightToolPanel, setRightToolPanel] = useState<RightToolPanel>(null);
@@ -114,7 +118,7 @@ export function App() {
   }, []);
 
   const loadSnapshots = useCallback(async (targetProjectPath: string) => {
-    const query = new URLSearchParams({ limit: '8', projectPath: targetProjectPath });
+    const query = new URLSearchParams({ limit: '50', projectPath: targetProjectPath });
     const response = await apiFetch(`/api/snapshots?${query}`);
     if (!response.ok) throw new Error('Не удалось загрузить список снимков.');
     setSnapshots(await response.json() as AnalysisSnapshotSummary[]);
@@ -229,6 +233,7 @@ export function App() {
       const payload = await response.json() as StoredAnalysisSnapshot | { error: string };
       if (!response.ok || 'error' in payload) throw new Error('error' in payload ? payload.error : 'Не удалось открыть снимок.');
       applyAnalysis(payload.analysis, payload.snapshot.id);
+      setSnapshotLibraryOpen(false);
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
       setError(requestError instanceof Error ? requestError.message : 'Неизвестная ошибка');
@@ -239,6 +244,25 @@ export function App() {
       }
     }
   }, [applyAnalysis]);
+
+  const deleteSnapshot = useCallback(async (snapshot: AnalysisSnapshotSummary) => {
+    if (!window.confirm(`Удалить снимок «${snapshot.projectName}» от ${new Date(snapshot.createdAt).toLocaleString('ru')}?`)) return;
+    setSnapshotBusyId(snapshot.id);
+    setError(null);
+    try {
+      const response = await apiFetch(`/api/snapshots/${snapshot.id}`, { method: 'DELETE' });
+      if (!response.ok && response.status !== 204) {
+        const payload = await response.json() as { error?: string };
+        throw new Error(payload.error ?? 'Не удалось удалить снимок.');
+      }
+      setSnapshots((current) => current.filter((item) => item.id !== snapshot.id));
+      setActiveSnapshotId((current) => current === snapshot.id ? null : current);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Не удалось удалить снимок.');
+    } finally {
+      setSnapshotBusyId(null);
+    }
+  }, []);
 
   useEffect(() => {
     void loadAnalysis('/api/demo');
@@ -430,6 +454,18 @@ export function App() {
     setMapSelectedIds(new Set());
   }, []);
 
+  const openBlueprintFromFile = useCallback(async () => {
+    setError(null);
+    try {
+      const selectedFile = await chooseBlueprintFile();
+      if (!selectedFile) return;
+      const opened = parseBlueprintFile(selectedFile.contents, selectedFile.name);
+      openBlueprintOnMap(opened.blueprint, opened.name, null);
+    } catch (openError) {
+      setError(openError instanceof Error ? openError.message : 'Не удалось открыть файл Blueprint.');
+    }
+  }, [openBlueprintOnMap]);
+
   const openActualMap = useCallback(() => {
     setMapSource('analysis');
     setRightToolPanel(null);
@@ -569,9 +605,6 @@ export function App() {
       <ProjectSidebar
         summary={analysis.summary}
         onCompare={compareWithGitReference}
-        snapshots={snapshots}
-        activeSnapshotId={activeSnapshotId}
-        onOpenSnapshot={openSnapshot}
         loading={loading}
         blueprint={mapSource === 'blueprint' ? mapBlueprint : null}
       />
@@ -621,6 +654,14 @@ export function App() {
                 onClick={() => changeWorkspaceMode('constructor')}
               >Конструктор</button>
             </div>
+            <button
+              type="button"
+              className={`snapshot-library-trigger ${snapshotLibraryOpen ? 'is-active' : ''}`}
+              onMouseEnter={() => void import('./components/SnapshotLibrary')}
+              onFocus={() => void import('./components/SnapshotLibrary')}
+              onClick={() => setSnapshotLibraryOpen(true)}
+            ><span aria-hidden="true">◷</span><b>Снимки</b><i>{snapshots.length}</i></button>
+            <button type="button" className="blueprint-file-open" title="Открыть Blueprint из файла" onClick={() => void openBlueprintFromFile()}><span aria-hidden="true">↥</span><b>Открыть Blueprint</b></button>
             {workspaceMode === 'map' && mapBlueprint ? (
               <div className="map-source-toggle" role="group" aria-label="Источник карты">
                 <button type="button" className={mapSource === 'analysis' ? 'is-active' : ''} onClick={openActualMap}>Код</button>
@@ -687,7 +728,11 @@ export function App() {
           </Suspense>
         ) : mapSource === 'blueprint' && mapBlueprint ? (
           <Suspense fallback={<div className="loading-overlay"><span />Открываем Blueprint на карте…</div>}>
-            <BlueprintMapView name={mapBlueprint.name} document={mapBlueprint.document} onEdit={() => changeWorkspaceMode('constructor')} />
+            <BlueprintMapView
+              name={mapBlueprint.name}
+              document={mapBlueprint.document}
+              {...(mapBlueprint.id ? { onEdit: () => changeWorkspaceMode('constructor') } : {})}
+            />
           </Suspense>
         ) : viewMode === '2d' ? (
           <div className="graph-viewport">
@@ -809,6 +854,22 @@ export function App() {
               </Suspense>
             ) : null}
           </>
+        ) : null}
+
+        {snapshotLibraryOpen ? (
+          <Suspense fallback={null}>
+            <SnapshotLibrary
+              projectName={analysis.summary.name}
+              projectPath={analysis.summary.rootPath}
+              snapshots={snapshots}
+              activeSnapshotId={activeSnapshotId}
+              loading={loading}
+              busyId={snapshotBusyId}
+              onOpen={(snapshotId) => void openSnapshot(snapshotId)}
+              onDelete={(snapshot) => void deleteSnapshot(snapshot)}
+              onClose={() => setSnapshotLibraryOpen(false)}
+            />
+          </Suspense>
         ) : null}
       </section>
 

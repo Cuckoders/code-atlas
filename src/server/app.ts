@@ -272,6 +272,15 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
     return snapshot ?? reply.status(404).send({ error: 'Снимок анализа не найден.' });
   });
 
+  app.delete<{ Params: { id: string } }>('/api/snapshots/:id', {
+    config: {
+      rateLimit: { max: 30, timeWindow: '1 minute' },
+    },
+    schema: { params: identifierParamsSchema },
+  }, async (request, reply) => snapshots.delete(request.params.id)
+    ? reply.status(204).send()
+    : reply.status(404).send({ error: 'Снимок анализа не найден.' }));
+
   app.get<{ Querystring: { projectPath: string } }>('/api/blueprints', {
     schema: { querystring: blueprintQuerySchema },
   }, async (request) => snapshots.getBlueprint(request.query.projectPath));

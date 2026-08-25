@@ -35,10 +35,11 @@ import {
   type BlueprintNodeKind,
   type BlueprintNodeStatus,
 } from '../../shared/blueprint';
+import { blueprintFileName, serializeBlueprintFile } from '../../shared/blueprint-file';
 import type { BlueprintSimulationResult } from '../../shared/blueprint-simulation';
 import type { AtlasNode, NodeKind, ProjectAnalysis } from '../../shared/graph';
 import type { BlueprintPreset } from '../../shared/blueprint-presets';
-import { apiFetch } from '../desktop';
+import { apiFetch, saveBlueprintFile } from '../desktop';
 import {
   calculateBlueprintImpact,
   findBlueprintMatchSuggestions,
@@ -312,6 +313,20 @@ export default function ArchitectureConstructor({ analysis, onOpenOnMap }: Archi
       : documentRef.current;
     onOpenOnMap(source, saved?.name ?? blueprintName, saved?.id ?? activeBlueprintId);
   }, [activeBlueprintId, blueprintName, dirty, onOpenOnMap, save]);
+
+  const exportToFile = useCallback(async () => {
+    setMessage('Выберите папку для Blueprint…');
+    try {
+      const saved = await saveBlueprintFile(
+        blueprintFileName(blueprintName),
+        serializeBlueprintFile(blueprintName, documentRef.current),
+      );
+      setMessage(saved ? 'Blueprint сохранён в файл.' : 'Сохранение файла отменено.');
+    } catch (exportError) {
+      setSaveState('error');
+      setMessage(exportError instanceof Error ? exportError.message : 'Не удалось сохранить файл Blueprint.');
+    }
+  }, [blueprintName]);
 
   const addNode = useCallback((kind: BlueprintNodeKind, position?: { x: number; y: number }) => {
     const bounds = canvas.current?.getBoundingClientRect();
@@ -621,7 +636,8 @@ export default function ArchitectureConstructor({ analysis, onOpenOnMap }: Archi
           <button type="button" className="blueprint-import" onClick={importActual}>Импортировать факт</button>
           <button type="button" className={simulationOpen ? 'is-active' : ''} disabled={document.nodes.length === 0} onClick={() => { setSimulationOpen((open) => !open); setCodegenOpen(false); }}>▶ Запустить</button>
           <button type="button" className={codegenOpen ? 'is-active' : ''} disabled={document.nodes.length === 0} onClick={() => { setCodegenOpen((open) => !open); setSimulationOpen(false); }}>⌘ Код</button>
-          <button type="button" className="blueprint-open-map" disabled={document.nodes.length === 0 || saveState === 'saving' || saveState === 'loading'} onClick={() => void openOnMap()}>⌘ Открыть на карте</button>
+          <button type="button" className="blueprint-export" title="Сохранить Blueprint в файл" disabled={document.nodes.length === 0} onClick={() => void exportToFile()}>↓ <span>Файл</span></button>
+          <button type="button" className="blueprint-open-map" title="Открыть Blueprint на основной карте" disabled={document.nodes.length === 0 || saveState === 'saving' || saveState === 'loading'} onClick={() => void openOnMap()}>⌘ <span>Открыть на карте</span></button>
         </div>
         <div className="blueprint-drift" aria-label="Архитектурный drift">
           <span className="is-matched">● {drift.matched} совпадает</span>

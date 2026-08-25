@@ -43,7 +43,7 @@ const STATUS_LABELS = {
 interface BlueprintMapViewProps {
   name: string;
   document: ArchitectureBlueprintDraft;
-  onEdit: () => void;
+  onEdit?: () => void;
 }
 
 export default function BlueprintMapView({ name, document, onEdit }: BlueprintMapViewProps) {
@@ -132,7 +132,7 @@ export default function BlueprintMapView({ name, document, onEdit }: BlueprintMa
             {selectedNode.behavior ? <div><dt>Логика</dt><dd>{selectedNode.behavior.kind}</dd></div> : null}
             {selectedNode.codegen?.enabled ? <div><dt>Шаблон</dt><dd>{selectedNode.codegen.template}</dd></div> : null}
           </dl>
-          <button type="button" className="blueprint-map-details__edit" onClick={onEdit}>Редактировать в конструкторе</button>
+          {onEdit ? <button type="button" className="blueprint-map-details__edit" onClick={onEdit}>Редактировать в конструкторе</button> : null}
         </aside>
       ) : null}
 

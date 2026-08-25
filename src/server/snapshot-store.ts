@@ -261,6 +261,10 @@ export class SnapshotStore implements ParseCache {
     };
   }
 
+  delete(id: string): boolean {
+    return this.database.prepare('DELETE FROM analysis_snapshots WHERE id = ?').run(id).changes > 0;
+  }
+
   saveBlueprint(draft: ArchitectureBlueprintDraft): ArchitectureBlueprint {
     const blueprint: ArchitectureBlueprint = { ...draft, updatedAt: new Date().toISOString() };
     const validationError = validateArchitectureBlueprint(blueprint, true);

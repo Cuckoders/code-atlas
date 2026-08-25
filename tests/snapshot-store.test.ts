@@ -5,9 +5,26 @@ import { describe, expect, it } from 'vitest';
 import { analyzeProject } from '../src/server/analyzer.js';
 import { SnapshotStore } from '../src/server/snapshot-store.js';
 import type { ArchitectureBlueprintDraft } from '../src/shared/blueprint.js';
+import type { ProjectAnalysis } from '../src/shared/graph.js';
 import { createDemoOtlpPayload, parseOtlpJson } from '../src/server/runtime-trace.js';
 
 describe('SnapshotStore', () => {
+  it('keeps project snapshot histories separate and deletes individual snapshots', () => {
+    const store = new SnapshotStore(':memory:');
+    try {
+      const first = store.save(snapshotAnalysis('/projects/first'));
+      const second = store.save(snapshotAnalysis('/projects/second'));
+      expect(store.list(50, '/projects/first')).toEqual([expect.objectContaining({ id: first.id })]);
+      expect(store.list(50, '/projects/second')).toEqual([expect.objectContaining({ id: second.id })]);
+      expect(store.delete(first.id)).toBe(true);
+      expect(store.delete(first.id)).toBe(false);
+      expect(store.list(50, '/projects/first')).toEqual([]);
+      expect(store.list(50, '/projects/second')).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
   it('stores, opens, renames, duplicates and deletes blueprint documents', () => {
     const store = new SnapshotStore(':memory:');
     try {
@@ -116,3 +133,27 @@ describe('SnapshotStore', () => {
     }
   });
 });
+
+function snapshotAnalysis(rootPath: string): ProjectAnalysis {
+  return {
+    summary: {
+      name: path.basename(rootPath),
+      rootPath,
+      filesScanned: 1,
+      filesSkipped: 0,
+      services: 0,
+      modules: 0,
+      symbols: 0,
+      databases: [],
+      technologies: [],
+      languages: [],
+      git: { available: false, commitsAnalyzed: 0, contributors: [] },
+      durationMs: 1,
+      truncated: false,
+    },
+    nodes: [],
+    edges: [],
+    diagnostics: [],
+    warnings: [],
+  };
+}
