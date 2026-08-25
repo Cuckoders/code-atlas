@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -28,7 +28,14 @@ import {
   type BlueprintNodeStatus,
 } from '../../shared/blueprint';
 import type { AtlasNode, NodeKind, ProjectAnalysis } from '../../shared/graph';
+import type { BlueprintPreset } from '../../shared/blueprint-presets';
 import { apiFetch } from '../desktop';
+import {
+  calculateBlueprintImpact,
+  findBlueprintMatchSuggestions,
+  type BlueprintImpact,
+  type BlueprintMatchSuggestion,
+} from '../blueprint-insights';
 import { layoutAtlasGraph } from '../graph-layout';
 import {
   BlueprintGraphNode,
@@ -37,9 +44,10 @@ import {
 } from './BlueprintGraphNode';
 
 const nodeTypes = { blueprint: BlueprintGraphNode };
+const BlueprintPresetLibrary = lazy(() => import('./BlueprintPresetLibrary'));
 const PALETTE_KINDS: BlueprintNodeKind[] = [
   'system', 'service', 'frontend', 'gateway', 'controller', 'module',
-  'component', 'database', 'cache', 'queue', 'external',
+  'component', 'class', 'abstract-class', 'interface', 'database', 'cache', 'queue', 'external',
 ];
 
 const NODE_LABELS: Record<BlueprintNodeKind, string> = {
@@ -50,6 +58,9 @@ const NODE_LABELS: Record<BlueprintNodeKind, string> = {
   controller: 'Контроллер',
   module: 'Модуль',
   component: 'Компонент',
+  class: 'Класс',
+  'abstract-class': 'Абстрактный класс',
+  interface: 'Интерфейс',
   database: 'База данных',
   cache: 'Кэш',
   queue: 'Очередь',
@@ -58,6 +69,7 @@ const NODE_LABELS: Record<BlueprintNodeKind, string> = {
 
 const EDGE_LABELS: Record<BlueprintEdgeKind, string> = {
   http: 'HTTP', grpc: 'gRPC', event: 'Событие', reads: 'Читает', writes: 'Пишет', depends: 'Зависит',
+  implements: 'Реализует', extends: 'Наследует', creates: 'Создаёт', calls: 'Вызывает',
 };
 
 const STATUS_LABELS: Record<BlueprintNodeStatus, string> = {
@@ -90,6 +102,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
   const [saveState, setSaveState] = useState<SaveState>('loading');
   const [message, setMessage] = useState('Загружаем blueprint…');
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [presetLibraryOpen, setPresetLibraryOpen] = useState(false);
   const [, setHistoryVersion] = useState(0);
 
   const replaceDocument = useCallback((next: ArchitectureBlueprintDraft, recordHistory = true) => {
@@ -247,6 +260,39 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     window.requestAnimationFrame(() => void flowInstance.current?.fitView({ padding: 0.2, duration: 300 }));
   }, [analysis, replaceDocument]);
 
+  const loadPreset = useCallback((
+    presetDocument: ArchitectureBlueprintDraft,
+    mode: 'replace' | 'append',
+    preset: BlueprintPreset,
+  ) => {
+    if (mode === 'replace') {
+      replaceDocument(presetDocument);
+    } else {
+      const current = documentRef.current;
+      if (current.nodes.length + presetDocument.nodes.length > MAX_BLUEPRINT_NODES
+        || current.edges.length + presetDocument.edges.length > MAX_BLUEPRINT_EDGES) {
+        setSaveState('error');
+        setMessage('Пресет не помещается в лимиты blueprint.');
+        return;
+      }
+      const currentMaxX = current.nodes.reduce((maximum, node) => Math.max(maximum, node.position.x), -320);
+      const presetMinX = presetDocument.nodes.reduce((minimum, node) => Math.min(minimum, node.position.x), 0);
+      const offsetX = currentMaxX + 340 - presetMinX;
+      replaceDocument({
+        ...current,
+        nodes: [...current.nodes, ...presetDocument.nodes.map((node) => ({
+          ...node,
+          position: { x: node.position.x + offsetX, y: node.position.y },
+        }))],
+        edges: [...current.edges, ...presetDocument.edges],
+      });
+    }
+    setPresetLibraryOpen(false);
+    setSelection(null);
+    setMessage(`Пресет «${preset.title}» ${mode === 'replace' ? 'загружен' : 'добавлен'}.`);
+    window.requestAnimationFrame(() => void flowInstance.current?.fitView({ padding: 0.2, duration: 320 }));
+  }, [replaceDocument]);
+
   const matchedActualIds = useMemo(() => new Set(document.nodes.flatMap((node) => node.actualNodeId ? [node.actualNodeId] : [])), [document.nodes]);
   const actualNodeIds = useMemo(() => new Set(analysis.nodes.map((node) => node.id)), [analysis.nodes]);
   const visibleActualNodes = useMemo(() => analysis.nodes.slice(0, MAX_BLUEPRINT_NODES), [analysis.nodes]);
@@ -311,7 +357,11 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       type: 'smoothstep',
       selected: selection?.type === 'edge' && selection.id === edge.id,
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-      style: { stroke: edge.kind === 'event' ? '#bf91ff' : edge.kind === 'writes' ? '#f08bb4' : '#5b9f8d', strokeWidth: 1.7 },
+      style: {
+        stroke: edgeColor(edge.kind),
+        strokeWidth: 1.7,
+        strokeDasharray: edge.kind === 'implements' || edge.kind === 'extends' ? '5 3' : undefined,
+      },
       labelStyle: { fill: '#718092', fontSize: 8 },
       labelBgStyle: { fill: '#0b0e14', fillOpacity: 0.86 },
     }));
@@ -379,6 +429,12 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
   const selectedNode = selection?.type === 'node' ? document.nodes.find((node) => node.id === selection.id) : undefined;
   const selectedEdge = selection?.type === 'edge' ? document.edges.find((edge) => edge.id === selection.id) : undefined;
   const selectedActual = selection?.type === 'actual' ? analysis.nodes.find((node) => node.id === selection.id) : undefined;
+  const matchSuggestions = useMemo(() => selectedNode && !selectedNode.actualNodeId
+    ? findBlueprintMatchSuggestions(selectedNode, analysis.nodes, matchedActualIds)
+    : [], [analysis.nodes, matchedActualIds, selectedNode]);
+  const impact = useMemo(() => selectedNode
+    ? calculateBlueprintImpact(selectedNode.id, document.nodes, document.edges)
+    : null, [document.edges, document.nodes, selectedNode]);
 
   return (
     <div className="architecture-constructor">
@@ -386,6 +442,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
         <div className="blueprint-history">
           <button type="button" disabled={history.current.past.length === 0} onClick={undo} title="Отменить (⌘Z)">↶</button>
           <button type="button" disabled={history.current.future.length === 0} onClick={redo} title="Повторить (⇧⌘Z)">↷</button>
+          <button type="button" className="blueprint-presets" onClick={() => setPresetLibraryOpen(true)}>Пресеты</button>
           <button type="button" className="blueprint-import" onClick={importActual}>Импортировать факт</button>
         </div>
         <div className="blueprint-drift" aria-label="Архитектурный drift">
@@ -485,17 +542,63 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       </div>
 
       <aside className="blueprint-inspector">
-        {selectedNode ? <NodeEditor key={selectedNode.id} node={selectedNode} onApply={(next) => commit((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === next.id ? next : node) }))} onDelete={deleteSelection} /> : null}
+        {selectedNode && impact ? (
+          <NodeEditor
+            key={selectedNode.id}
+            node={selectedNode}
+            suggestions={matchSuggestions}
+            impact={impact}
+            onSelectNode={(nodeId) => setSelection({ type: 'node', id: nodeId })}
+            onApply={(next) => commit((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === next.id ? next : node) }))}
+            onDelete={deleteSelection}
+          />
+        ) : null}
         {selectedEdge ? <EdgeEditor key={selectedEdge.id} edge={selectedEdge} onApply={(next) => commit((current) => ({ ...current, edges: current.edges.map((edge) => edge.id === next.id ? next : edge) }))} onDelete={deleteSelection} /> : null}
         {selectedActual ? <ActualInspector node={selectedActual} /> : null}
         {!selectedNode && !selectedEdge && !selectedActual ? <BlueprintHelp drift={drift} /> : null}
       </aside>
+      {presetLibraryOpen ? (
+        <Suspense fallback={<div className="preset-library-loading">Загружаем библиотеку паттернов…</div>}>
+          <BlueprintPresetLibrary projectPath={analysis.summary.rootPath} onClose={() => setPresetLibraryOpen(false)} onLoad={loadPreset} />
+        </Suspense>
+      ) : null}
     </div>
   );
 }
 
-function NodeEditor({ node, onApply, onDelete }: { node: BlueprintNode; onApply: (node: BlueprintNode) => void; onDelete: () => void }) {
+function ImpactCard({ impact, onSelectNode }: { impact: BlueprintImpact; onSelectNode: (nodeId: string) => void }) {
+  return (
+    <section className={`blueprint-impact blueprint-impact--${impact.level}`}>
+      <header><span>Blast radius</span><strong>{impact.level === 'high' ? 'Высокий' : impact.level === 'medium' ? 'Средний' : 'Низкий'}</strong></header>
+      <div><span><strong>{impact.directDependencies.length}</strong> зависимостей</span><span><strong>{impact.directDependents.length}</strong> прямых потребителей</span><span><strong>{impact.affected.length}</strong> затронуто всего</span></div>
+      {impact.affected.length > 0 ? (
+        <ul>{impact.affected.slice(0, 6).map((affected) => <li key={affected.id}><button type="button" onClick={() => onSelectNode(affected.id)}>{affected.label}<i>→</i></button></li>)}</ul>
+      ) : <p>Изменение этого узла пока не затрагивает другие компоненты.</p>}
+    </section>
+  );
+}
+
+function NodeEditor({
+  node,
+  suggestions,
+  impact,
+  onApply,
+  onDelete,
+  onSelectNode,
+}: {
+  node: BlueprintNode;
+  suggestions: BlueprintMatchSuggestion[];
+  impact: BlueprintImpact;
+  onApply: (node: BlueprintNode) => void;
+  onDelete: () => void;
+  onSelectNode: (nodeId: string) => void;
+}) {
   const [draft, setDraft] = useState(node);
+  const applyActualLink = (actualNodeId?: string) => {
+    const next = cleanNode({ ...draft, actualNodeId });
+    setDraft(next);
+    onApply(next);
+  };
   return (
     <form className="blueprint-editor" onSubmit={(event) => {
       event.preventDefault();
@@ -510,7 +613,19 @@ function NodeEditor({ node, onApply, onDelete }: { node: BlueprintNode; onApply:
       <label><span>Технология</span><input maxLength={128} value={draft.technology ?? ''} onChange={(event) => setDraft({ ...draft, technology: event.target.value })} placeholder="Fastify, Spring, Kafka…" /></label>
       <label><span>Язык</span><input maxLength={128} value={draft.language ?? ''} onChange={(event) => setDraft({ ...draft, language: event.target.value })} placeholder="TypeScript, Kotlin…" /></label>
       <label><span>Владелец</span><input maxLength={128} value={draft.owner ?? ''} onChange={(event) => setDraft({ ...draft, owner: event.target.value })} placeholder="Команда или человек" /></label>
-      {draft.actualNodeId ? <div className="blueprint-linked"><span>Связан с фактом</span><code>{draft.actualNodeId}</code></div> : null}
+      {draft.actualNodeId ? (
+        <div className="blueprint-linked"><span>Связан с фактом</span><code>{draft.actualNodeId}</code><button type="button" onClick={() => applyActualLink(undefined)}>Отвязать</button></div>
+      ) : suggestions.length > 0 ? (
+        <div className="blueprint-match-suggestions">
+          <span>Возможные совпадения с кодом</span>
+          {suggestions.map((suggestion) => (
+            <button key={suggestion.node.id} type="button" onClick={() => applyActualLink(suggestion.node.id)}>
+              <i>{suggestion.score}%</i><strong>{suggestion.node.label}</strong><small>{suggestion.reasons.join(' · ')}</small>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <ImpactCard impact={impact} onSelectNode={onSelectNode} />
       <div className="blueprint-editor__actions"><button type="submit">Применить</button><button type="button" className="is-danger" onClick={onDelete}>Удалить</button></div>
     </form>
   );
@@ -556,11 +671,13 @@ function blueprintKindForAtlasNode(node: AtlasNode): BlueprintNodeKind {
   if (node.kind === 'database') return /redis|cache/i.test(node.label) ? 'cache' : 'database';
   if (node.kind === 'controller') return 'controller';
   if (node.kind === 'module') return 'module';
+  if (node.kind === 'class') return 'class';
+  if (node.kind === 'interface') return 'interface';
   return 'component';
 }
 
 function nodeIcon(kind: BlueprintNodeKind): string {
-  const icons: Record<BlueprintNodeKind, string> = { system: '◇', service: '⬡', frontend: '▱', gateway: '↔', controller: '⌁', module: '▤', component: 'C', database: '◉', cache: '◆', queue: '≋', external: '↗' };
+  const icons: Record<BlueprintNodeKind, string> = { system: '◇', service: '⬡', frontend: '▱', gateway: '↔', controller: '⌁', module: '▤', component: 'C', class: 'C', 'abstract-class': 'A', interface: 'I', database: '◉', cache: '◆', queue: '≋', external: '↗' };
   return icons[kind];
 }
 
@@ -568,6 +685,16 @@ function driftColor(state: BlueprintDriftState): string {
   if (state === 'matched') return '#62c8a9';
   if (state === 'planned-only') return '#74b7ff';
   return '#c66376';
+}
+
+function edgeColor(kind: BlueprintEdgeKind): string {
+  if (kind === 'event') return '#bf91ff';
+  if (kind === 'writes') return '#f08bb4';
+  if (kind === 'implements') return '#8ea4ff';
+  if (kind === 'extends') return '#f4cd72';
+  if (kind === 'creates') return '#ffac75';
+  if (kind === 'calls') return '#7ec8f7';
+  return '#5b9f8d';
 }
 
 function formatTime(value: string): string {

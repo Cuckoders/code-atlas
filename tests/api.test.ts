@@ -249,13 +249,35 @@ describe('API', () => {
           status: 'planned',
           position: { x: 420, y: 80 },
         },
+        {
+          id: '123e4567-e89b-42d3-a456-426614174004',
+          label: 'PaymentStrategy',
+          kind: 'interface',
+          status: 'approved',
+          position: { x: 120, y: 280 },
+        },
+        {
+          id: '123e4567-e89b-42d3-a456-426614174005',
+          label: 'CardPayment',
+          kind: 'class',
+          status: 'planned',
+          position: { x: 420, y: 280 },
+        },
       ],
-      edges: [{
-        id: '123e4567-e89b-42d3-a456-426614174003',
-        source: '123e4567-e89b-42d3-a456-426614174001',
-        target: '123e4567-e89b-42d3-a456-426614174002',
-        kind: 'writes',
-      }],
+      edges: [
+        {
+          id: '123e4567-e89b-42d3-a456-426614174003',
+          source: '123e4567-e89b-42d3-a456-426614174001',
+          target: '123e4567-e89b-42d3-a456-426614174002',
+          kind: 'writes',
+        },
+        {
+          id: '123e4567-e89b-42d3-a456-426614174006',
+          source: '123e4567-e89b-42d3-a456-426614174005',
+          target: '123e4567-e89b-42d3-a456-426614174004',
+          kind: 'implements',
+        },
+      ],
     } as const;
 
     const saved = await app.inject({ method: 'PUT', url: '/api/blueprints', payload });

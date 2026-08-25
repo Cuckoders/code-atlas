@@ -11,13 +11,27 @@ export const BLUEPRINT_NODE_KINDS = [
   'controller',
   'module',
   'component',
+  'class',
+  'abstract-class',
+  'interface',
   'database',
   'cache',
   'queue',
   'external',
 ] as const;
 
-export const BLUEPRINT_EDGE_KINDS = ['http', 'grpc', 'event', 'reads', 'writes', 'depends'] as const;
+export const BLUEPRINT_EDGE_KINDS = [
+  'http',
+  'grpc',
+  'event',
+  'reads',
+  'writes',
+  'depends',
+  'implements',
+  'extends',
+  'creates',
+  'calls',
+] as const;
 export const BLUEPRINT_NODE_STATUSES = ['planned', 'approved', 'implemented'] as const;
 
 export type BlueprintNodeKind = (typeof BLUEPRINT_NODE_KINDS)[number];
