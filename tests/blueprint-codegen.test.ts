@@ -137,6 +137,31 @@ describe('blueprint code generation', () => {
       expect(result.steps).toHaveLength(2);
       expect(result.output).toEqual({ orderId: 'demo-1', accepted: true });
 
+      const servicePath = path.join(projectPath, 'order-service.ts');
+      const serviceSource = await fs.readFile(servicePath, 'utf8');
+      await fs.writeFile(servicePath, serviceSource.replace(
+        'return { ...(input as object), ...{\"accepted\":true} };',
+        "throw new Error('edited source failed');",
+      ));
+      const editedResponse = await fetch(`${status.origin}/orders`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ orderId: 'demo-2' }),
+      });
+      const editedResult = await editedResponse.json() as {
+        ok: boolean;
+        steps: Array<{ nodeLabel: string; status: string; error?: string }>;
+      };
+      expect(editedResponse.status).toBe(500);
+      expect(editedResult.ok).toBe(false);
+      expect(editedResult.steps.at(-1)).toEqual(expect.objectContaining({
+        nodeLabel: 'Order Service',
+        status: 'failed',
+        error: 'edited source failed',
+      }));
+
+      await fs.writeFile(servicePath, serviceSource);
+
       const failedResponse = await fetch(`${status.origin}/orders`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

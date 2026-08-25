@@ -36,7 +36,7 @@ export class BlueprintRuntimeManager {
 
     const port = await availablePort();
     const origin = `http://127.0.0.1:${port}`;
-    const child = spawn(process.execPath, ['server.mjs'], {
+    const child = spawn(process.execPath, ['--experimental-transform-types', 'server.mjs'], {
       cwd: projectPath,
       env: {
         ...process.env,
