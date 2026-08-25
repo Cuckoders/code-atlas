@@ -6,10 +6,12 @@ import {
   MarkerType,
   MiniMap,
   ReactFlow,
+  SelectionMode,
   type Connection,
   type Edge,
   type Node,
   type NodeChange,
+  type OnSelectionChangeParams,
   type ReactFlowInstance,
 } from '@xyflow/react';
 import {
@@ -99,6 +101,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
   const flowInstance = useRef<ReactFlowInstance<Node<BlueprintGraphNodeData>, Edge> | null>(null);
   const canvas = useRef<HTMLDivElement | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
   const [showActual, setShowActual] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('loading');
@@ -133,6 +136,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     setDirty(true);
     setSaveState('idle');
     setSelection(null);
+    setSelectedNodeIds(new Set());
     setHistoryVersion((value) => value + 1);
   }, []);
 
@@ -145,10 +149,22 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     setDirty(true);
     setSaveState('idle');
     setSelection(null);
+    setSelectedNodeIds(new Set());
     setHistoryVersion((value) => value + 1);
   }, []);
 
   const deleteSelection = useCallback(() => {
+    const selectedPlannedIds = new Set([...selectedNodeIds].filter((id) => !id.startsWith('actual:')));
+    if (selectedPlannedIds.size > 0) {
+      commit((current) => ({
+        ...current,
+        nodes: current.nodes.filter((node) => !selectedPlannedIds.has(node.id)),
+        edges: current.edges.filter((edge) => !selectedPlannedIds.has(edge.source) && !selectedPlannedIds.has(edge.target)),
+      }));
+      setSelection(null);
+      setSelectedNodeIds(new Set());
+      return;
+    }
     if (!selection || selection.type === 'actual') return;
     commit((current) => selection.type === 'node'
       ? {
@@ -158,7 +174,8 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
         }
       : { ...current, edges: current.edges.filter((edge) => edge.id !== selection.id) });
     setSelection(null);
-  }, [commit, selection]);
+    setSelectedNodeIds(new Set());
+  }, [commit, selectedNodeIds, selection]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -230,6 +247,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     };
     commit((current) => ({ ...current, nodes: [...current.nodes, node] }));
     setSelection({ type: 'node', id: node.id });
+    setSelectedNodeIds(new Set([node.id]));
   }, [commit]);
 
   const importActual = useCallback(() => {
@@ -260,6 +278,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     replaceDocument({ version: BLUEPRINT_VERSION, projectPath: analysis.summary.rootPath, nodes, edges });
     setShowActual(false);
     setSelection(null);
+    setSelectedNodeIds(new Set());
     window.requestAnimationFrame(() => void flowInstance.current?.fitView({ padding: 0.2, duration: 300 }));
   }, [analysis, replaceDocument]);
 
@@ -293,6 +312,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     }
     setPresetLibraryOpen(false);
     setSelection(null);
+    setSelectedNodeIds(new Set());
     setMessage(`Пресет «${preset.title}» ${mode === 'replace' ? 'загружен' : 'добавлен'}.`);
     window.requestAnimationFrame(() => void flowInstance.current?.fitView({ padding: 0.2, duration: 320 }));
   }, [replaceDocument]);
@@ -325,7 +345,8 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       position: node.position,
       width: BLUEPRINT_NODE_WIDTH,
       height: BLUEPRINT_NODE_HEIGHT,
-      selected: selection?.type === 'node' && selection.id === node.id,
+      measured: { width: BLUEPRINT_NODE_WIDTH, height: BLUEPRINT_NODE_HEIGHT },
+      selected: selectedNodeIds.has(node.id),
       data: {
         label: node.label,
         kind: node.kind,
@@ -341,7 +362,8 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       position: actualLayout.positions.get(node.id) ?? { x: 0, y: 0 },
       width: BLUEPRINT_NODE_WIDTH,
       height: BLUEPRINT_NODE_HEIGHT,
-      selected: selection?.type === 'actual' && selection.id === node.id,
+      measured: { width: BLUEPRINT_NODE_WIDTH, height: BLUEPRINT_NODE_HEIGHT },
+      selected: selectedNodeIds.has(`actual:${node.id}`),
       draggable: false,
       connectable: false,
       data: {
@@ -354,7 +376,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
       },
     }));
     return [...ghosts, ...planned];
-  }, [actualLayout.positions, actualNodeIds, document.nodes, selection, showActual, visibleActualOnly]);
+  }, [actualLayout.positions, actualNodeIds, document.nodes, selectedNodeIds, showActual, visibleActualOnly]);
 
   const flowEdges = useMemo<Edge[]>(() => {
     const planned = document.edges.map((edge): Edge => ({
@@ -396,13 +418,39 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     for (const change of changes) {
       if (change.type === 'position' && change.position && !change.id.startsWith('actual:')) positions.set(change.id, change.position);
     }
-    if (positions.size === 0) return;
-    const next = {
-      ...documentRef.current,
-      nodes: documentRef.current.nodes.map((node) => positions.has(node.id) ? { ...node, position: positions.get(node.id)! } : node),
-    };
-    documentRef.current = next;
-    setDocument(next);
+    if (positions.size > 0) {
+      const next = {
+        ...documentRef.current,
+        nodes: documentRef.current.nodes.map((node) => positions.has(node.id) ? { ...node, position: positions.get(node.id)! } : node),
+      };
+      documentRef.current = next;
+      setDocument(next);
+    }
+    const selectionChanges = changes.filter((change) => change.type === 'select');
+    if (selectionChanges.length > 0) {
+      setSelectedNodeIds((current) => {
+        const next = new Set(current);
+        for (const change of selectionChanges) {
+          if (change.type !== 'select') continue;
+          if (change.selected) next.add(change.id); else next.delete(change.id);
+        }
+        return next;
+      });
+    }
+  }, []);
+
+  const onSelectionChange = useCallback(({ nodes, edges }: OnSelectionChangeParams<Node<BlueprintGraphNodeData>, Edge>) => {
+    setSelectedNodeIds(new Set(nodes.map((node) => node.id)));
+    if (nodes.length === 1 && edges.length === 0) {
+      const id = nodes[0].id;
+      setSelection(id.startsWith('actual:')
+        ? { type: 'actual', id: id.slice('actual:'.length) }
+        : { type: 'node', id });
+    } else if (edges.length === 1 && nodes.length === 0 && !edges[0].id.startsWith('actual:')) {
+      setSelection({ type: 'edge', id: edges[0].id });
+    } else {
+      setSelection(null);
+    }
   }, []);
 
   const onConnect = useCallback((connection: Connection) => {
@@ -416,6 +464,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
     };
     commit((current) => ({ ...current, edges: [...current.edges, edge] }));
     setSelection({ type: 'edge', id: edge.id });
+    setSelectedNodeIds(new Set());
   }, [commit]);
 
   const onReconnect = useCallback((oldEdge: Edge, connection: Connection) => {
@@ -429,6 +478,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
         : edge),
     }));
     setSelection({ type: 'edge', id: oldEdge.id });
+    setSelectedNodeIds(new Set());
   }, [commit]);
 
   useEffect(() => {
@@ -443,6 +493,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
         deleteSelection();
       } else if (!editing && event.key === 'Escape') {
         setSelection(null);
+        setSelectedNodeIds(new Set());
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -533,6 +584,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
           nodeTypes={nodeTypes}
           onInit={(instance) => { flowInstance.current = instance; }}
           onNodesChange={onNodesChange}
+          onSelectionChange={onSelectionChange}
           onNodeDragStart={() => { dragStart.current = documentRef.current; }}
           onNodeDragStop={() => {
             if (!dragStart.current || dragStart.current === documentRef.current) return;
@@ -548,13 +600,18 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
           connectionRadius={28}
           reconnectRadius={18}
           connectionLineStyle={{ stroke: '#9ae8d1', strokeWidth: 2 }}
-          onNodeClick={(_event, node) => setSelection(node.id.startsWith('actual:')
-            ? { type: 'actual', id: node.id.slice('actual:'.length) }
-            : { type: 'node', id: node.id })}
-          onEdgeClick={(_event, edge) => {
-            if (!edge.id.startsWith('actual:')) setSelection({ type: 'edge', id: edge.id });
+          onPaneClick={() => {
+            setSelection(null);
+            setSelectedNodeIds(new Set());
           }}
-          onPaneClick={() => setSelection(null)}
+          selectionOnDrag
+          selectionMode={SelectionMode.Partial}
+          panOnDrag={[1]}
+          panActivationKeyCode="Space"
+          panOnScroll
+          panOnScrollSpeed={0.8}
+          zoomOnScroll={false}
+          multiSelectionKeyCode="Shift"
           deleteKeyCode={null}
           fitView
           fitViewOptions={{ padding: 0.22 }}
@@ -577,6 +634,7 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
             nodeColor={(node) => driftColor((node.data as BlueprintGraphNodeData).drift)}
           />
         </ReactFlow>
+        <div className="figma-navigation-hint" aria-hidden="true"><span>↖ рамка — группа</span><span>drag — узлы</span><span>Space + drag / колесо — карта</span></div>
         {document.nodes.length === 0 && !showActual ? (
           <div className="blueprint-empty"><strong>Начните с системы или сервиса</strong><span>Перетащите компонент из палитры на карту.</span></div>
         ) : null}
@@ -589,14 +647,18 @@ export default function ArchitectureConstructor({ analysis }: ArchitectureConstr
             node={selectedNode}
             suggestions={matchSuggestions}
             impact={impact}
-            onSelectNode={(nodeId) => setSelection({ type: 'node', id: nodeId })}
+            onSelectNode={(nodeId) => {
+              setSelection({ type: 'node', id: nodeId });
+              setSelectedNodeIds(new Set([nodeId]));
+            }}
             onApply={(next) => commit((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === next.id ? next : node) }))}
             onDelete={deleteSelection}
           />
         ) : null}
         {selectedEdge ? <EdgeEditor key={selectedEdge.id} edge={selectedEdge} onApply={(next) => commit((current) => ({ ...current, edges: current.edges.map((edge) => edge.id === next.id ? next : edge) }))} onDelete={deleteSelection} /> : null}
         {selectedActual ? <ActualInspector node={selectedActual} /> : null}
-        {!selectedNode && !selectedEdge && !selectedActual ? <BlueprintHelp drift={drift} /> : null}
+        {!selectedNode && !selectedEdge && !selectedActual && selectedNodeIds.size > 1 ? <BlueprintGroupSelection count={selectedNodeIds.size} onDelete={deleteSelection} /> : null}
+        {!selectedNode && !selectedEdge && !selectedActual && selectedNodeIds.size <= 1 ? <BlueprintHelp drift={drift} /> : null}
       </aside>
       {presetLibraryOpen ? (
         <Suspense fallback={<div className="preset-library-loading">Загружаем библиотеку паттернов…</div>}>
@@ -690,6 +752,25 @@ function ActualInspector({ node }: { node: AtlasNode }) {
 
 function BlueprintHelp({ drift }: { drift: { matched: number; planned: number; actual: number } }) {
   return <div className="blueprint-help"><span>Architecture Blueprint</span><h2>Спроектируйте целевую архитектуру</h2><p>Добавляйте компоненты, связывайте их и сравнивайте план с кодом, который Code Atlas уже обнаружил.</p><ol><li><i>1</i>Перетащите компоненты</li><li><i>2</i>Соедините точки на узлах</li><li><i>3</i>Настройте свойства справа</li><li><i>4</i>Сохраните blueprint</li></ol><div><strong>{drift.planned}</strong><span>ещё нет в коде</span><strong>{drift.actual}</strong><span>не описано в плане</span></div><small>Стрелка: выберите и перетащите конец · ⌘Z — отмена · Delete — удалить</small></div>;
+}
+
+function BlueprintGroupSelection({ count, onDelete }: { count: number; onDelete: () => void }) {
+  return (
+    <div className="blueprint-group-selection">
+      <span>Групповое выделение</span>
+      <strong>{selectionCountLabel(count)}</strong>
+      <p>Перетащите любой выбранный узел — вся группа сохранит взаимное расположение.</p>
+      <div><i>Drag</i><small>переместить группу</small><i>Shift</i><small>добавить или убрать узел</small><i>Esc</i><small>снять выделение</small></div>
+      <button type="button" onClick={onDelete}>Удалить выбранные</button>
+    </div>
+  );
+}
+
+function selectionCountLabel(count: number): string {
+  const lastTwo = count % 100;
+  const last = count % 10;
+  const suffix = lastTwo >= 11 && lastTwo <= 14 ? 'элементов' : last === 1 ? 'элемент' : last >= 2 && last <= 4 ? 'элемента' : 'элементов';
+  return `${count} ${suffix}`;
 }
 
 function cleanNode(node: BlueprintNode): BlueprintNode {

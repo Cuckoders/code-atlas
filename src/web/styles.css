@@ -161,6 +161,12 @@ button { color: inherit; }
 .search-field { display: flex; align-items: center; width: 240px; height: 30px; padding: 0 9px; border: 1px solid #242b36; border-radius: 6px; background: #0c0f15; color: #596476; }
 .search-field input { width: 100%; border: 0; outline: 0; padding-left: 7px; background: transparent; color: #cfd5df; font-size: 9px; }
 .graph-viewport { position: absolute; inset: 0; min-width: 0; transition: right .24s ease; }
+.graph-viewport .react-flow__pane.draggable, .blueprint-canvas .react-flow__pane.draggable { cursor: default; }
+.graph-viewport .react-flow__pane.dragging, .blueprint-canvas .react-flow__pane.dragging { cursor: grabbing; }
+.graph-viewport .react-flow__node.draggable, .blueprint-canvas .react-flow__node.draggable { cursor: grab; }
+.graph-viewport .react-flow__node.dragging, .blueprint-canvas .react-flow__node.dragging { cursor: grabbing; }
+.react-flow__selection, .react-flow__nodesselection-rect { border: 1px solid #7f9fe5; background: rgba(104, 137, 211, .1); }
+.figma-navigation-hint { position: absolute; z-index: 5; bottom: 14px; left: 14px; display: flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid rgba(48, 59, 75, .82); border-radius: 7px; background: rgba(10, 14, 20, .88); box-shadow: 0 8px 24px rgba(0, 0, 0, .22); backdrop-filter: blur(10px); pointer-events: none; }.figma-navigation-hint span { padding: 4px 6px; border-right: 1px solid #28313f; color: #718096; font: 6px 'DM Mono'; white-space: nowrap; }.figma-navigation-hint span:last-child { border-right: 0; }
 .canvas-shell .react-flow { padding-top: 52px; }
 .canvas-shell.is-request-panel-open .graph-viewport { right: 360px; }
 .canvas-shell.is-request-panel-open .graph-3d { right: 360px; }
@@ -416,7 +422,6 @@ button { color: inherit; }
 .blueprint-palette > p { margin: 14px 2px 0; color: #4c5867; font-size: 7px; line-height: 1.5; }
 
 .blueprint-canvas { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: radial-gradient(circle at 50% 40%, rgba(19, 28, 32, .55), rgba(8, 11, 16, .3) 54%); }
-.blueprint-canvas .react-flow__pane { cursor: crosshair; }
 .blueprint-canvas .react-flow__minimap { width: 180px; height: 120px; border: 1px solid #2a323d; border-radius: 8px; background: #0b0f15; }
 .blueprint-canvas .blueprint-map-controls { bottom: 144px; }
 .blueprint-canvas .react-flow__controls { border: 1px solid #2b3440; border-radius: 7px; overflow: hidden; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); }
@@ -461,6 +466,7 @@ button { color: inherit; }
 .blueprint-help > span { color: #5a8b7d; font: 7px 'DM Mono'; letter-spacing: .1em; text-transform: uppercase; }.blueprint-help h2 { margin: 9px 0; color: #ccd6df; font: 500 16px/1.3 'DM Mono'; }.blueprint-help > p { margin: 0; color: #667282; font-size: 8px; line-height: 1.6; }
 .blueprint-help ol { display: grid; gap: 9px; margin: 20px 0; padding: 0; list-style: none; }.blueprint-help li { display: flex; align-items: center; gap: 9px; color: #818d9b; font-size: 8px; }.blueprint-help li i { display: grid; place-items: center; width: 21px; height: 21px; border: 1px solid #315047; border-radius: 50%; color: #79c7b1; background: #10201b; font: 7px 'DM Mono'; font-style: normal; }
 .blueprint-help > div { display: grid; grid-template-columns: 32px 1fr; gap: 5px 8px; padding: 11px; border: 1px solid #252f39; border-radius: 6px; background: #0e1319; }.blueprint-help > div strong { color: #c1ccd7; font: 12px 'DM Mono'; }.blueprint-help > div span { align-self: center; color: #5c6877; font-size: 7px; }.blueprint-help > small { display: block; margin-top: 14px; color: #495563; font: 6px 'DM Mono'; }
+.blueprint-group-selection { display: grid; gap: 10px; padding: 12px; border: 1px solid #3d5275; border-radius: 8px; background: linear-gradient(145deg, #121a29, #0d131d); }.blueprint-group-selection > span { color: #7694cd; font: 7px 'DM Mono'; letter-spacing: .1em; text-transform: uppercase; }.blueprint-group-selection > strong { color: #d0d9ec; font: 500 18px 'DM Mono'; }.blueprint-group-selection > p { margin: 0; color: #718099; font-size: 8px; line-height: 1.55; }.blueprint-group-selection > div { display: grid; grid-template-columns: 45px 1fr; gap: 5px 8px; padding: 9px; border: 1px solid #28364b; border-radius: 6px; background: #0c121c; }.blueprint-group-selection i { color: #9bb2e3; font: 7px 'DM Mono'; font-style: normal; }.blueprint-group-selection small { color: #59677c; font-size: 7px; }.blueprint-group-selection button { height: 31px; border: 1px solid #603743; border-radius: 5px; color: #dc8292; background: #21131a; font: 7px 'DM Mono'; cursor: pointer; }.blueprint-group-selection button:hover { border-color: #925063; color: #f0a1af; }
 
 .preset-library-backdrop { position: absolute; z-index: 40; inset: 0; display: grid; place-items: center; padding: clamp(12px, 2vw, 24px); overflow: hidden; overscroll-behavior: contain; background: rgba(5, 7, 11, .82); backdrop-filter: blur(9px); }
 .preset-library, .preset-library-loading { border: 1px solid #2b3440; border-radius: 12px; background: #0c1016; box-shadow: 0 30px 90px rgba(0, 0, 0, .5); }

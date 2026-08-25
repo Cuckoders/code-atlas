@@ -6,9 +6,12 @@ import {
   MarkerType,
   MiniMap,
   ReactFlow,
+  SelectionMode,
   type Edge,
   type Node,
+  type NodeChange,
   type NodeMouseHandler,
+  type OnSelectionChangeParams,
   type ReactFlowInstance,
 } from '@xyflow/react';
 import type {
@@ -78,6 +81,9 @@ export function App() {
   const [requestTrace, setRequestTrace] = useState<RequestTrace | null>(null);
   const [tracePlayback, setTracePlayback] = useState<TracePlaybackOptions>({ speed: 1, playing: true });
   const [graphLayoutMode, setGraphLayoutMode] = useState<GraphLayoutMode>('services');
+  const [mapNodePositions, setMapNodePositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [mapNodeDimensions, setMapNodeDimensions] = useState<Record<string, { width: number; height: number }>>({});
+  const [mapSelectedIds, setMapSelectedIds] = useState<Set<string>>(() => new Set());
   const activeRequest = useRef<AbortController | null>(null);
   const flowInstance = useRef<ReactFlowInstance | null>(null);
   const nativeDirectoryPicker = useMemo(() => hasNativeDirectoryPicker(), []);
@@ -263,6 +269,63 @@ export function App() {
     ),
     [analysis?.edges, analysis?.nodes, deferredSearch, filteredGraph, graphLayoutMode, requestTrace, tracePlayback],
   );
+
+  const interactiveGraphNodes = useMemo<Node[]>(() => graph.nodes.map((node) => ({
+    ...node,
+    position: mapNodePositions[node.id] ?? node.position,
+    selected: mapSelectedIds.has(node.id) || (mapSelectedIds.size === 0 && selectedNode?.id === node.id),
+    ...(mapNodeDimensions[node.id] ? { measured: mapNodeDimensions[node.id] } : {}),
+  })), [graph.nodes, mapNodeDimensions, mapNodePositions, mapSelectedIds, selectedNode?.id]);
+
+  useEffect(() => {
+    setMapNodePositions({});
+    setMapNodeDimensions({});
+    setMapSelectedIds(new Set());
+  }, [analysis?.summary.rootPath, focusNode?.id, graphLayoutMode]);
+
+  const handleMapNodesChange = useCallback((changes: NodeChange[]) => {
+    const moved = changes.filter((change) => change.type === 'position' && Boolean(change.position));
+    if (moved.length > 0) {
+      setMapNodePositions((current) => {
+        const next = { ...current };
+        for (const change of moved) {
+          if (change.type === 'position' && change.position) next[change.id] = change.position;
+        }
+        return next;
+      });
+    }
+    const selectionChanges = changes.filter((change) => change.type === 'select');
+    if (selectionChanges.length > 0) {
+      setMapSelectedIds((current) => {
+        const next = new Set(current);
+        for (const change of selectionChanges) {
+          if (change.type !== 'select') continue;
+          if (change.selected) next.add(change.id); else next.delete(change.id);
+        }
+        return next;
+      });
+    }
+    const dimensionChanges = changes.filter((change) => change.type === 'dimensions' && Boolean(change.dimensions));
+    if (dimensionChanges.length > 0) {
+      setMapNodeDimensions((current) => {
+        const next = { ...current };
+        for (const change of dimensionChanges) {
+          if (change.type === 'dimensions' && change.dimensions) next[change.id] = change.dimensions;
+        }
+        return next;
+      });
+    }
+  }, []);
+
+  const handleMapSelectionChange = useCallback(({ nodes }: OnSelectionChangeParams) => {
+    setMapSelectedIds(new Set(nodes.filter((node) => node.selectable !== false).map((node) => node.id)));
+    if (nodes.length !== 1) {
+      setSelectedNode(null);
+      return;
+    }
+    const atlas = (nodes[0].data as Partial<AtlasGraphNodeData>).atlas;
+    setSelectedNode(atlas ?? null);
+  }, []);
 
   useEffect(() => {
     if (viewMode !== '2d' || !requestTrace || !flowInstance.current) return;
@@ -563,7 +626,7 @@ export function App() {
           <div className="graph-viewport">
             <ReactFlow
               key={`${graphLayoutMode}:${focusNode?.id ?? 'root'}:${requestPanelOpen || runtimePanelOpen ? 'trace-open' : 'trace-closed'}`}
-              nodes={graph.nodes}
+              nodes={interactiveGraphNodes}
               edges={graph.edges}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
@@ -571,9 +634,22 @@ export function App() {
                 flowInstance.current = instance;
                 if (requestTrace) window.requestAnimationFrame(() => fitRequestPath(instance, requestTrace));
               }}
+              onNodesChange={handleMapNodesChange}
+              onSelectionChange={handleMapSelectionChange}
               onNodeClick={handleNodeClick}
               onNodeDoubleClick={handleNodeDoubleClick}
-              onPaneClick={() => setSelectedNode(null)}
+              onPaneClick={() => {
+                setSelectedNode(null);
+                setMapSelectedIds(new Set());
+              }}
+              selectionOnDrag
+              selectionMode={SelectionMode.Partial}
+              panOnDrag={[1]}
+              panActivationKeyCode="Space"
+              panOnScroll
+              panOnScrollSpeed={0.8}
+              zoomOnScroll={false}
+              multiSelectionKeyCode="Shift"
               fitView
               fitViewOptions={{ padding: 0.24 }}
               minZoom={0.18}
@@ -594,6 +670,7 @@ export function App() {
                 maskColor="rgba(6, 8, 13, .72)"
               />
             </ReactFlow>
+            <div className="figma-navigation-hint" aria-hidden="true"><span>↖ рамка — группа</span><span>drag — узлы</span><span>Space + drag / колесо — карта</span></div>
           </div>
         ) : (
           <Suspense fallback={<div className="loading-overlay"><span />Загружаем 3D-движок…</div>}>
