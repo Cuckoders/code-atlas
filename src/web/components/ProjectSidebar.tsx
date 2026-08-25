@@ -185,6 +185,9 @@ export function ProjectSidebar({
         {summary.incremental && summary.incremental.eligibleFiles > 0
           ? ` · кэш ${summary.incremental.reusedFiles}/${summary.incremental.eligibleFiles}`
           : ''}
+        {summary.execution?.isolated
+          ? ` · worker #${summary.execution.workerThreadId ?? '?'}`
+          : ''}
       </footer>
     </aside>
   );

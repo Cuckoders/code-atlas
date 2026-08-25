@@ -12,6 +12,7 @@ import {
 } from '@xyflow/react';
 import type {
   AnalysisJob,
+  AnalysisProgress,
   AnalysisJobStatus,
   AnalysisSnapshotSummary,
   AtlasEdge,
@@ -62,6 +63,7 @@ export function App() {
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [loading, setLoading] = useState(true);
   const [jobStatus, setJobStatus] = useState<AnalysisJobStatus | null>(null);
+  const [jobProgress, setJobProgress] = useState<AnalysisProgress | null>(null);
   const [snapshots, setSnapshots] = useState<AnalysisSnapshotSummary[]>([]);
   const [activeSnapshotId, setActiveSnapshotId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +103,7 @@ export function App() {
     activeRequest.current = controller;
     setLoading(true);
     setJobStatus('queued');
+    setJobProgress({ phase: 'scanning', processedFiles: 0, totalFiles: 0, percentage: 0 });
     setError(null);
     try {
       const createResponse = await fetch('/api/analysis-jobs', {
@@ -116,6 +119,7 @@ export function App() {
       let job = created;
       while (job.status === 'queued' || job.status === 'running') {
         setJobStatus(job.status);
+        setJobProgress(job.progress ?? null);
         await abortableDelay(300, controller.signal);
         const statusResponse = await fetch(`/api/analysis-jobs/${job.id}`, { signal: controller.signal });
         const statusPayload = await statusResponse.json() as AnalysisJob | { error: string };
@@ -125,6 +129,7 @@ export function App() {
         job = statusPayload;
       }
       setJobStatus(job.status);
+      setJobProgress(job.progress ?? null);
       if (job.status === 'failed' || !job.snapshotId) throw new Error(job.error ?? 'Анализ завершился с ошибкой.');
 
       const snapshotResponse = await fetch(`/api/snapshots/${job.snapshotId}`, { signal: controller.signal });
@@ -141,6 +146,7 @@ export function App() {
       if (activeRequest.current === controller) {
         activeRequest.current = null;
         setJobStatus(null);
+        setJobProgress(null);
         setLoading(false);
       }
     }
@@ -285,7 +291,11 @@ export function App() {
             aria-label="Путь к проекту"
           />
           <button type="submit" disabled={loading || !projectPath.trim()}>
-            {jobStatus === 'queued' ? 'В очереди…' : jobStatus === 'running' ? 'Индексируем…' : 'Построить карту'}
+            {jobStatus === 'queued'
+              ? 'В очереди…'
+              : jobStatus === 'running'
+                ? `Индексируем${jobProgress ? ` · ${jobProgress.percentage}%` : '…'}`
+                : 'Построить карту'}
           </button>
         </form>
         <div className="view-switch" aria-label="Режим карты">
@@ -379,8 +389,30 @@ export function App() {
 
         {loading ? (
           <div className="loading-overlay">
-            <span />
-            {jobStatus === 'queued' ? 'Задание ожидает worker…' : jobStatus === 'running' ? 'Индексируем и сохраняем снимок…' : 'Загружаем карту…'}
+            <span className="loading-spinner" />
+            <div className="analysis-progress">
+              <strong>{analysisProgressLabel(jobStatus, jobProgress)}</strong>
+              {jobStatus === 'running' && jobProgress ? (
+                <>
+                  <div
+                    className="analysis-progress__track"
+                    role="progressbar"
+                    aria-label="Прогресс анализа проекта"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={jobProgress.percentage}
+                  >
+                    <i style={{ width: `${jobProgress.percentage}%` }} />
+                  </div>
+                  <small>
+                    {jobProgress.totalFiles > 0
+                      ? `${jobProgress.processedFiles} / ${jobProgress.totalFiles} файлов`
+                      : 'Подготавливаем список файлов'}
+                    {' · '}{jobProgress.percentage}%
+                  </small>
+                </>
+              ) : null}
+            </div>
           </div>
         ) : null}
       </section>
@@ -394,6 +426,17 @@ export function App() {
       />
     </main>
   );
+}
+
+function analysisProgressLabel(status: AnalysisJobStatus | null, progress: AnalysisProgress | null): string {
+  if (status === 'queued') return 'Задание ожидает свободный worker…';
+  if (status !== 'running' || !progress) return 'Загружаем карту…';
+  switch (progress.phase) {
+    case 'scanning': return 'Сканируем структуру проекта…';
+    case 'parsing': return 'Разбираем исходный код…';
+    case 'comparing': return 'Сравниваем с Git-версией…';
+    case 'finalizing': return 'Собираем граф и сохраняем снимок…';
+  }
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {

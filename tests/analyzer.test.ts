@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AnalysisError, analyzeProject } from '../src/server/analyzer.js';
+import type { AnalysisProgress } from '../src/shared/graph.js';
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.resolve(currentDirectory, '../examples/sample-commerce');
@@ -65,5 +66,16 @@ describe('analyzeProject', () => {
 
   it('rejects a missing directory', async () => {
     await expect(analyzeProject(path.join(fixturePath, 'missing'))).rejects.toBeInstanceOf(AnalysisError);
+  });
+
+  it('reports bounded file-level progress through every analysis phase', async () => {
+    const progress: AnalysisProgress[] = [];
+
+    await analyzeProject(fixturePath, { onProgress: (update) => progress.push(update) });
+
+    expect(progress[0]).toEqual({ phase: 'scanning', processedFiles: 0, totalFiles: 0, percentage: 0 });
+    expect(progress).toContainEqual({ phase: 'parsing', processedFiles: 4, totalFiles: 4, percentage: 100 });
+    expect(progress.at(-1)).toEqual({ phase: 'finalizing', processedFiles: 1, totalFiles: 1, percentage: 100 });
+    expect(progress.every((update) => update.percentage >= 0 && update.percentage <= 100)).toBe(true);
   });
 });

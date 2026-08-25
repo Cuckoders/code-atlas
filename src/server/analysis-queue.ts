@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AnalysisJob, ProjectAnalysis } from '../shared/graph.js';
-import { AnalysisError, analyzeProject, type AnalyzeProjectOptions } from './analyzer.js';
+import { AnalysisError, type AnalyzeProjectOptions } from './analyzer.js';
+import { runAnalysisWorker } from './analysis-worker-runner.js';
 import type { SnapshotStore } from './snapshot-store.js';
 
 const MAX_RETAINED_JOBS = 100;
@@ -15,7 +16,7 @@ export class AnalysisQueue {
 
   constructor(
     private readonly snapshots: SnapshotStore,
-    private readonly analyze: Analyze = analyzeProject,
+    private readonly analyze?: Analyze,
     private readonly reportError: (error: unknown) => void = () => undefined,
   ) {}
 
@@ -37,7 +38,7 @@ export class AnalysisQueue {
 
   get(id: string): AnalysisJob | null {
     const job = this.jobs.get(id);
-    return job ? { ...job } : null;
+    return job ? { ...job, ...(job.progress ? { progress: { ...job.progress } } : {}) } : null;
   }
 
   async close(): Promise<void> {
@@ -61,11 +62,18 @@ export class AnalysisQueue {
       if (!job) continue;
       job.status = 'running';
       job.startedAt = new Date().toISOString();
+      job.progress = { phase: 'scanning', processedFiles: 0, totalFiles: 0, percentage: 0 };
       try {
-        const analysis = await this.analyze(job.projectPath, {
-          compareRef: job.compareRef,
-          parseCache: this.snapshots,
-        });
+        const updateProgress: NonNullable<AnalyzeProjectOptions['onProgress']> = (progress) => {
+          job.progress = { ...progress };
+        };
+        const analysis = this.analyze
+          ? await this.analyze(job.projectPath, {
+              compareRef: job.compareRef,
+              parseCache: this.snapshots,
+              onProgress: updateProgress,
+            })
+          : await runAnalysisWorker(job.projectPath, job.compareRef, this.snapshots, updateProgress);
         this.snapshots.pruneParsedSources();
         const snapshot = this.snapshots.save(analysis, job.compareRef);
         job.status = 'completed';

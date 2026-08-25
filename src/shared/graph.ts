@@ -132,6 +132,10 @@ export interface ProjectSummary {
     reusedFiles: number;
     parsedFiles: number;
   };
+  execution?: {
+    isolated: boolean;
+    workerThreadId?: number;
+  };
 }
 
 export interface ProjectAnalysis {
@@ -144,6 +148,15 @@ export interface ProjectAnalysis {
 
 export type AnalysisJobStatus = 'queued' | 'running' | 'completed' | 'failed';
 
+export type AnalysisProgressPhase = 'scanning' | 'parsing' | 'comparing' | 'finalizing';
+
+export interface AnalysisProgress {
+  phase: AnalysisProgressPhase;
+  processedFiles: number;
+  totalFiles: number;
+  percentage: number;
+}
+
 export interface AnalysisJob {
   id: string;
   status: AnalysisJobStatus;
@@ -154,6 +167,7 @@ export interface AnalysisJob {
   finishedAt?: string;
   snapshotId?: string;
   error?: string;
+  progress?: AnalysisProgress;
 }
 
 export interface AnalysisSnapshotSummary {

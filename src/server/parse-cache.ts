@@ -5,8 +5,8 @@ export const PARSER_CACHE_VERSION = 1;
 export const MAX_PARSE_CACHE_JSON_SIZE = 2 * 1024 * 1024;
 
 export interface ParseCache {
-  getParsedSource(projectPath: string, relativePath: string, contentHash: string): ParsedSource | null;
-  setParsedSource(projectPath: string, relativePath: string, contentHash: string, parsed: ParsedSource): void;
+  getParsedSource(projectPath: string, relativePath: string, contentHash: string): ParsedSource | null | Promise<ParsedSource | null>;
+  setParsedSource(projectPath: string, relativePath: string, contentHash: string, parsed: ParsedSource): void | Promise<void>;
 }
 
 const SYMBOL_KINDS = new Set<NodeKind>(['controller', 'class', 'interface', 'function']);
@@ -16,10 +16,14 @@ export function parseCachedSource(value: string): ParsedSource | null {
   if (Buffer.byteLength(value, 'utf8') > MAX_PARSE_CACHE_JSON_SIZE) return null;
   try {
     const parsed = JSON.parse(value) as unknown;
-    return isParsedSource(parsed) ? parsed : null;
+    return validateParsedSource(parsed);
   } catch {
     return null;
   }
+}
+
+export function validateParsedSource(value: unknown): ParsedSource | null {
+  return isParsedSource(value) ? value : null;
 }
 
 function isParsedSource(value: unknown): value is ParsedSource {

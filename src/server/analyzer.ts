@@ -5,6 +5,8 @@ import ts from 'typescript';
 import type {
   AtlasEdge,
   AtlasNode,
+  AnalysisProgress,
+  AnalysisProgressPhase,
   ArchitectureDiffSummary,
   LanguageStat,
   NodeKind,
@@ -107,10 +109,12 @@ export class AnalysisError extends Error {
 export interface AnalyzeProjectOptions {
   compareRef?: string;
   parseCache?: ParseCache;
+  onProgress?: (progress: AnalysisProgress) => void;
 }
 
 export async function analyzeProject(inputPath: string, options: AnalyzeProjectOptions = {}): Promise<ProjectAnalysis> {
   const startedAt = performance.now();
+  reportProgress(options.onProgress, 'scanning', 0, 0);
   const rootPath = path.resolve(inputPath.trim());
   const rootStat = await fs.stat(rootPath).catch(() => null);
 
@@ -140,9 +144,15 @@ export async function analyzeProject(inputPath: string, options: AnalyzeProjectO
     gitAnalysis,
     startedAt,
     options.parseCache,
+    options.onProgress,
+    'parsing',
   );
-  if (!options.compareRef) return analysis;
+  if (!options.compareRef) {
+    reportProgress(options.onProgress, 'finalizing', 1, 1);
+    return analysis;
+  }
 
+  reportProgress(options.onProgress, 'comparing', 0, 0);
   const snapshot = await readGitSnapshot(rootPath, options.compareRef, isSnapshotRelevant);
   const snapshotFiles: FileEntry[] = snapshot.files.map((file) => ({
     absolutePath: path.join(rootPath, file.relativePath),
@@ -163,12 +173,15 @@ export async function analyzeProject(inputPath: string, options: AnalyzeProjectO
     emptyGitAnalysis(),
     performance.now(),
     options.parseCache,
+    options.onProgress,
+    'comparing',
   );
   if (snapshot.truncated) {
     analysis.warnings.push('Исторический Git-снимок ограничен: архитектурный diff может быть частичным.');
   }
   const diff = applyArchitectureDiff(analysis, baseAnalysis);
   diff.summary.durationMs = Math.round(performance.now() - startedAt);
+  reportProgress(options.onProgress, 'finalizing', 1, 1);
   return diff;
 }
 
@@ -181,6 +194,8 @@ async function buildProjectAnalysis(
   gitAnalysis: GitAnalysis,
   startedAt: number,
   parseCache?: ParseCache,
+  onProgress?: (progress: AnalysisProgress) => void,
+  progressPhase: AnalysisProgressPhase = 'parsing',
 ): Promise<ProjectAnalysis> {
   const projectName = path.basename(rootPath);
   const projectId = 'project:root';
@@ -230,29 +245,39 @@ async function buildProjectAnalysis(
   let symbolCount = 0;
   let reusedFiles = 0;
   let parsedFiles = 0;
+  const eligibleFiles = sourceFiles.filter((file) => (
+    isAnalyzableCode(path.extname(file.relativePath).toLowerCase()) && file.size <= MAX_FILE_SIZE
+  ));
+  const eligibleIds = new Set(eligibleFiles.map((file) => file.relativePath));
+  let processedFiles = 0;
+  reportProgress(onProgress, progressPhase, processedFiles, eligibleFiles.length);
 
   for (const file of sourceFiles) {
     const extension = path.extname(file.relativePath).toLowerCase();
     const language = LANGUAGE_BY_EXTENSION[extension];
     languageCounts.set(language, (languageCounts.get(language) ?? 0) + 1);
 
-    if (!isAnalyzableCode(extension) || file.size > MAX_FILE_SIZE) continue;
+    if (!eligibleIds.has(file.relativePath)) continue;
     const content = await readText(file);
-    if (content === null) continue;
+    if (content === null) {
+      processedFiles += 1;
+      reportProgress(onProgress, progressPhase, processedFiles, eligibleFiles.length);
+      continue;
+    }
 
     const moduleId = `module:${file.relativePath}`;
     const owner = findOwningService(file.relativePath, services);
     moduleIds.set(normalizeModulePath(file.relativePath), moduleId);
     const contentHash = parseCache ? sourceHash(content) : undefined;
     const cached = parseCache && contentHash
-      ? parseCache.getParsedSource(rootPath, file.relativePath, contentHash)
+      ? await parseCache.getParsedSource(rootPath, file.relativePath, contentHash)
       : null;
     const parsed = cached ?? await parseSource(file.relativePath, content);
     if (cached) {
       reusedFiles += 1;
     } else {
       parsedFiles += 1;
-      if (parseCache && contentHash) parseCache.setParsedSource(rootPath, file.relativePath, contentHash, parsed);
+      if (parseCache && contentHash) await parseCache.setParsedSource(rootPath, file.relativePath, contentHash, parsed);
     }
     const moduleInfo: ModuleInfo = {
       id: moduleId,
@@ -309,6 +334,8 @@ async function buildProjectAnalysis(
       importSpecifier: call.importSpecifier,
       line: call.line,
     }));
+    processedFiles += 1;
+    reportProgress(onProgress, progressPhase, processedFiles, eligibleFiles.length);
   }
 
   for (const item of pendingImports) {
@@ -389,6 +416,20 @@ async function buildProjectAnalysis(
 
 function sourceHash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
+}
+
+function reportProgress(
+  callback: AnalyzeProjectOptions['onProgress'],
+  phase: AnalysisProgressPhase,
+  processedFiles: number,
+  totalFiles: number,
+): void {
+  callback?.({
+    phase,
+    processedFiles,
+    totalFiles,
+    percentage: totalFiles > 0 ? Math.round((processedFiles / totalFiles) * 100) : phase === 'finalizing' ? 100 : 0,
+  });
 }
 
 function gitMetadata(history: GitFileHistory | undefined): AtlasNode['metadata'] {

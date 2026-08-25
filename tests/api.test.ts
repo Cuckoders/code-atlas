@@ -53,6 +53,7 @@ describe('API', () => {
 
     const completed = await waitForJob(app, createResponse.json<AnalysisJob>().id);
     expect(completed).toEqual(expect.objectContaining({ status: 'completed', snapshotId: expect.any(String) }));
+    expect(completed.progress).toEqual({ phase: 'finalizing', processedFiles: 1, totalFiles: 1, percentage: 100 });
 
     const listResponse = await app.inject({ method: 'GET', url: '/api/snapshots' });
     expect(listResponse.statusCode).toBe(200);
@@ -63,10 +64,15 @@ describe('API', () => {
 
     const snapshotResponse = await app.inject({ method: 'GET', url: `/api/snapshots/${completed.snapshotId}` });
     expect(snapshotResponse.statusCode).toBe(200);
-    expect(snapshotResponse.json<StoredAnalysisSnapshot>()).toEqual(expect.objectContaining({
+    const storedSnapshot = snapshotResponse.json<StoredAnalysisSnapshot>();
+    expect(storedSnapshot).toEqual(expect.objectContaining({
       snapshot: expect.objectContaining({ id: completed.snapshotId }),
       analysis: expect.objectContaining({ nodes: expect.any(Array), edges: expect.any(Array) }),
     }));
+    expect(storedSnapshot.analysis.summary.execution).toEqual({
+      isolated: true,
+      workerThreadId: expect.any(Number),
+    });
 
     const warmResponse = await app.inject({
       method: 'POST',
@@ -93,7 +99,7 @@ describe('API', () => {
 });
 
 async function waitForJob(instance: FastifyInstance, id: string): Promise<AnalysisJob> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
     const response = await instance.inject({ method: 'GET', url: `/api/analysis-jobs/${id}` });
     const job = response.json<AnalysisJob>();
     if (job.status === 'completed' || job.status === 'failed') return job;
