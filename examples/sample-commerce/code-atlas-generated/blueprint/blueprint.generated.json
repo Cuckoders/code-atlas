@@ -1,0 +1,95 @@
+{
+  "blueprint": "Основной blueprint",
+  "generatedAt": "2026-08-25T20:14:09.777Z",
+  "nodes": [
+    {
+      "id": "8c3d1dfd-7c0e-40ab-8dab-df37c1b1221f",
+      "label": "Web / Mobile",
+      "kind": "frontend"
+    },
+    {
+      "id": "3ded450c-0873-4e0f-9b91-a987aba4dfe5",
+      "label": "API Gateway",
+      "kind": "gateway"
+    },
+    {
+      "id": "c5c5647a-e5da-4230-9658-eeebdbee9b6b",
+      "label": "Catalog Service",
+      "kind": "service"
+    },
+    {
+      "id": "880f8d52-9ce4-44f6-82dd-a119711280ed",
+      "label": "Order Service",
+      "kind": "service"
+    },
+    {
+      "id": "32147c3a-5fdd-498f-997b-0ea75fa4c5fa",
+      "label": "Notification Service",
+      "kind": "service"
+    },
+    {
+      "id": "56af81d9-ff06-4bd5-8bd1-90c3868fdf07",
+      "label": "Модуль",
+      "kind": "module"
+    }
+  ],
+  "edges": [
+    {
+      "id": "f03da906-01bf-4ca3-94e5-5647c207c062",
+      "source": "8c3d1dfd-7c0e-40ab-8dab-df37c1b1221f",
+      "target": "3ded450c-0873-4e0f-9b91-a987aba4dfe5",
+      "kind": "http"
+    },
+    {
+      "id": "acbc8ce2-0f35-4267-8567-b861567df340",
+      "source": "3ded450c-0873-4e0f-9b91-a987aba4dfe5",
+      "target": "c5c5647a-e5da-4230-9658-eeebdbee9b6b",
+      "kind": "http"
+    },
+    {
+      "id": "fadc6cdd-2c54-4288-a952-8bfa1298aa79",
+      "source": "3ded450c-0873-4e0f-9b91-a987aba4dfe5",
+      "target": "880f8d52-9ce4-44f6-82dd-a119711280ed",
+      "kind": "http"
+    },
+    {
+      "id": "28b01bfa-55d1-446b-a4e2-de37db8ad3b8",
+      "source": "c5c5647a-e5da-4230-9658-eeebdbee9b6b",
+      "target": "39d8ebf6-8310-4ffe-a320-48ecb236d0d3",
+      "kind": "writes"
+    },
+    {
+      "id": "b1443f4d-7442-40fe-9c30-cce95654de47",
+      "source": "880f8d52-9ce4-44f6-82dd-a119711280ed",
+      "target": "a006dab3-8723-42d2-91b7-09c444d3e54d",
+      "kind": "writes"
+    },
+    {
+      "id": "0993db53-01b2-46d2-aa8c-61ff29d982d7",
+      "source": "880f8d52-9ce4-44f6-82dd-a119711280ed",
+      "target": "02b84aea-fa3b-44e1-b22a-b45a9f0a4c30",
+      "kind": "event",
+      "label": "OrderCreated"
+    },
+    {
+      "id": "0c2e49b9-392b-4305-93f0-04ef50998c77",
+      "source": "32147c3a-5fdd-498f-997b-0ea75fa4c5fa",
+      "target": "02b84aea-fa3b-44e1-b22a-b45a9f0a4c30",
+      "kind": "event",
+      "label": "subscribe"
+    },
+    {
+      "id": "0b972e8c-29a4-42c1-b016-a21f1cb6a19d",
+      "source": "880f8d52-9ce4-44f6-82dd-a119711280ed",
+      "target": "df5409a0-dcfd-440c-802a-848fce94bf1f",
+      "kind": "http"
+    },
+    {
+      "id": "8d374bbe-f43c-4f44-b824-066e957d1f1d",
+      "source": "56af81d9-ff06-4bd5-8bd1-90c3868fdf07",
+      "target": "3ded450c-0873-4e0f-9b91-a987aba4dfe5",
+      "kind": "depends",
+      "label": "Дз"
+    }
+  ]
+}
